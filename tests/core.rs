@@ -1,4 +1,4 @@
-use zmcp::{ErrorKind, json::{Document, Kind, Limits, Token}, rpc::{self, Id, Message}, transport::{FrameStatus, LineDecoder}};
+use zmcp::{ErrorKind, json::{Document, Limits, Token}, rpc::{self, Id, Message}, transport::{FrameStatus, LineDecoder}};
 
 #[test]
 fn json_round_trip_and_unicode() {
@@ -40,6 +40,7 @@ fn rpc_classes_are_disjoint() {
         (r#"{"jsonrpc":"2.0","method":"ping"}"#, 1),
         (r#"{"jsonrpc":"2.0","id":"a","result":{}}"#, 2),
         (r#"{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"bad"}}"#, 3),
+        (r#"{"jsonrpc":"2.0","error":{"code":-32700,"message":"bad"}}"#, 3),
     ];
     for (raw, expected) in cases {
         let mut t = [Token::EMPTY; 64];
@@ -47,7 +48,7 @@ fn rpc_classes_are_disjoint() {
         let got = match m { Message::Request(_) => 0, Message::Notification(_) => 1, Message::Success { .. } => 2, Message::Failure { .. } => 3 };
         assert_eq!(got, expected);
     }
-    for raw in [r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#, r#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#, r#"{"jsonrpc":"2.0","id":1.5,"method":"ping"}"#, r#"{"jsonrpc":"2.0","id":1,"result":{},"error":{}}"#, r#"{"jsonrpc":"2.0","id":1,"method":"ping","result":{}}"#, r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#] {
+    for raw in [r#"{"jsonrpc":"2.0","id":null,"method":"ping"}"#, r#"{"jsonrpc":"2.0","id":true,"method":"ping"}"#, r#"{"jsonrpc":"2.0","id":1.5,"method":"ping"}"#, r#"{"jsonrpc":"2.0","id":1,"result":{},"error":{}}"#, r#"{"jsonrpc":"2.0","id":1,"method":"ping","result":{}}"#, r#"{"jsonrpc":"1.0","id":1,"method":"ping"}"#, r#"{"jsonrpc":"2.0","result":{}}"#] {
         let mut t = [Token::EMPTY; 64];
         let d = Document::parse(raw.as_bytes(), &mut t, Limits::default()).unwrap();
         assert!(rpc::parse(d.root()).is_err(), "accepted {raw}");
@@ -84,6 +85,22 @@ fn framing_every_split_and_backpressure() {
 }
 
 #[test]
+fn framing_capacity_recovery_and_eof() {
+    let mut small = [0; 2]; let mut large = [0; 16];
+    let mut f = LineDecoder::new(&mut small, 16);
+    let step = f.feed(b"abc\n");
+    assert_eq!(step.consumed, 2);
+    assert_eq!(step.status, FrameStatus::NeedCapacity { needed: 3 });
+    assert!(f.finish().is_err());
+    f.replace_storage(&mut large).unwrap();
+    assert_eq!(f.feed(b"c\n").status, FrameStatus::Ready);
+    assert_eq!(f.message().unwrap(), b"abc");
+    f.consume(); assert!(f.finish().is_ok());
+    let mut storage = [0; 8]; let mut f = LineDecoder::new(&mut storage, 2);
+    assert_eq!(f.feed(b"abc\n").status, FrameStatus::TooLarge);
+}
+
+#[test]
 fn malformed_bytes_never_panic() {
     let mut state = 0x12345678u32;
     for len in 0..128 {
@@ -91,9 +108,7 @@ fn malformed_bytes_never_panic() {
             let mut bytes = [0u8; 128];
             for b in &mut bytes[..len] { state ^= state << 13; state ^= state >> 17; state ^= state << 5; *b = state as u8; }
             let mut t = [Token::EMPTY; 64];
-            if let Ok(d) = Document::parse(&bytes[..len], &mut t, Limits::default()) {
-                if d.root().kind() == Kind::Object { let _ = rpc::parse(d.root()); }
-            }
+            if let Ok(d) = Document::parse(&bytes[..len], &mut t, Limits::default()) { let _ = rpc::parse(d.root()); }
         }
     }
 }

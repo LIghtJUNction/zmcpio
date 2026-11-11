@@ -1,0 +1,49 @@
+name: Format trusted sources
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/format.yml']
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: trusted-format
+  cancel-in-progress: false
+jobs:
+  format:
+    if: github.repository == 'LIghtJUNction/zmcp' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: main
+      - run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt,clippy
+      - name: Format and validate before committing
+        run: |
+          cargo +1.99.1 fmt --all
+          cargo +1.99.1 fmt --all -- --check
+          cargo +1.99.1 test --locked --all-targets
+          cargo +1.99.1 clippy --locked --all-targets -- -D warnings
+      - name: Commit formatting without overwriting concurrent changes
+        run: |
+          if ! git diff --quiet; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add '*.rs'
+            git commit -m 'style: apply verified rustfmt output'
+            git push origin HEAD:main
+          fi
+      - name: Run CI for the formatted head explicitly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run ci.yml --ref main
+      - name: Verify public crate registration ownership
+        run: |
+          python - <<'PY'
+          import json, urllib.request
+          req = urllib.request.Request('https://crates.io/api/v1/crates/zmcp/owners', headers={'User-Agent':'zmcp-repository-verification/0.1'})
+          with urllib.request.urlopen(req, timeout=30) as response:
+              data = json.load(response)
+          print('Existing zmcp owners:', [u.get('login') for u in data.get('users', [])])
+          PY
