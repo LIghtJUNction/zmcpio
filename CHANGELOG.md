@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased — HTTP transports and opt-in protocol extensions
+## 0.3.0 — HTTP transports and opt-in protocol extensions
 
 - Add allocation-free SSE encoding/decoding and era-aware Streamable HTTP rules.
 - Add bounded optional HTTP/1.1 I/O with JSON/chunked SSE, strict framing, explicit
@@ -18,9 +18,8 @@
 - Preserve default no_std, the unsafe-code ban, exact dependency closure, and the
   protected bump/CARGO_REGISTRY_TOKEN publication workflow.
 
-This change adds public Action/Event variants. Downstream exhaustive matches need
-updating; publish it with a minor bump (0.3.0), not a 0.2.x patch. Publication is
-still a separate explicit release-workflow action.
+This minor release adds public Action/Event variants. Downstream exhaustive
+matches may need updates when upgrading from 0.2.x.
 
 ## 0.2.0 — MCP client and zcall integration
 
