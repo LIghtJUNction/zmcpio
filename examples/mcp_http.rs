@@ -91,24 +91,37 @@ fn serve(socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
     let mut body = BodyReader::new(&mut reader, head, request.len())?;
     if let Some(expect) = head.header("expect") {
         let status = if !expect.eq_ignore_ascii_case("100-continue")
-            || head.headers().filter(|h| h.name.eq_ignore_ascii_case("expect")).count() != 1
+            || head
+                .headers()
+                .filter(|h| h.name.eq_ignore_ascii_case("expect"))
+                .count()
+                != 1
         {
             417
         } else if !policy.authorized(headers) {
             401
-        } else if head.header("origin").is_some_and(|origin| !policy.origin_allowed(origin)) {
+        } else if head
+            .header("origin")
+            .is_some_and(|origin| !policy.origin_allowed(origin))
+        {
             403
         } else if method != Method::Post {
             405
         } else if !head.header("content-type").is_some_and(|value| {
-            value.split(';').next().is_some_and(|mime| mime.trim().eq_ignore_ascii_case(http::JSON))
+            value
+                .split(';')
+                .next()
+                .is_some_and(|mime| mime.trim().eq_ignore_ascii_case(http::JSON))
         }) {
             415
         } else {
             100
         };
         if status != 100 {
-            let allow = [Header { name: "Allow", value: "POST" }];
+            let allow = [Header {
+                name: "Allow",
+                value: "POST",
+            }];
             let fields = if status == 405 { &allow[..] } else { &[] };
             http_io::write_response(&mut socket, status, fields, b"")?;
             return Ok(());

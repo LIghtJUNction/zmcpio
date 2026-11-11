@@ -214,9 +214,7 @@ fn parse_head(raw: &str) -> io::Result<Head<'_>> {
             return Err(invalid("duplicate security or framing header"));
         }
     }
-    if (first == "HTTP/1.0" || third == "HTTP/1.0")
-        && head.header("transfer-encoding").is_some()
-    {
+    if (first == "HTTP/1.0" || third == "HTTP/1.0") && head.header("transfer-encoding").is_some() {
         return Err(invalid("HTTP/1.0 does not support Transfer-Encoding"));
     }
     if head.header("content-length").is_some() && head.header("transfer-encoding").is_some() {
@@ -260,8 +258,8 @@ pub fn read_response_head<'a, R: BufRead>(
         informational += 1;
     };
     // Reborrow only after the loop, so no previous iteration retains the buffer.
-    let raw = core::str::from_utf8(&output[..used])
-        .map_err(|_| invalid("HTTP head is not UTF-8"))?;
+    let raw =
+        core::str::from_utf8(&output[..used]).map_err(|_| invalid("HTTP head is not UTF-8"))?;
     parse_head(raw)
 }
 

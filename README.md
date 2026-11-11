@@ -3,7 +3,8 @@
 Bounded MCP client/server primitives for applications that own authorization and
 scheduling. The protocol core is `no_std`, allocation-free and forbids unsafe
 Rust. `zcall` is its only direct third-party dependency; `zconv` is transitive.
-The optional `std` feature adds a real blocking stdio server-process connection.
+The optional `std` feature adds blocking stdio process I/O and bounded HTTP/1.1
+I/O over caller-supplied TCP or verified TLS streams.
 
 The crate is named `zmcpio` on crates.io and the Rust API is imported as
 `zmcpio`. The former project name, `zmcp`, belongs to a different crates.io
@@ -16,15 +17,23 @@ publisher and **must not** be used as a dependency for this implementation.
 zmcpio = { version = "0.2", default-features = false }
 ```
 
-Enable `features = ["std"]` for `stdio::StdioTransport`. The protocol core and
-`zcall` bridge do not require an allocator. Process startup may allocate in std.
+The published 0.2.0 release predates the HTTP and extension modules below. Until
+those changes are released, use the source checkout or the implementation branch:
+
+```toml
+[dependencies]
+zmcpio = { git = "https://github.com/LIghtJUNction/zmcpio", branch = "feat/streamable-http-20261111", default-features = false, features = ["std"] }
+```
+
+On that branch, `std` enables `stdio::StdioTransport` and `http_io`. The protocol
+core and `zcall` bridge do not require an allocator. Process/socket setup may allocate.
 
 ## Boundary
 
 `zmcpio` parses complete JSON-RPC messages and returns borrowed actions.
 `Action::CallTool` does not execute anything. An application checks policy,
-runs its tool, then calls `Server::tool_result`. No agent loop, HTTP stack,
-database, model runtime or automatic network requests are included. Shared model
+runs its tool, then calls `Server::tool_result`. No agent loop, TLS engine,
+OAuth login flow, database, model runtime or automatic network requests are included. Shared model
 types and provider-format conversion come from `zcall`.
 
 `zharness` and `zmcpio` remain independent components, sharing the `zcall` contract:
@@ -60,24 +69,38 @@ bounded LF framing and keeps diagnostics off stdout. See [MCP](docs/MCP.md),
 See the [client and zcall guide](docs/CLIENT.md) for lifetimes, cancellation,
 pagination, error policies and custom transports. On Windows use `.exe` paths.
 
-## Implemented profile
+## Implemented boundaries
 
-JSON-RPC request/notification/success/error classification; MCP 2026-07-28
-per-request version and client capabilities, discovery, tools/list and tools/call;
-explicit 2025-11-25 initialization/initialized/ping compatibility; pagination
-cursors; text/image/audio/resource content; structured results; execution-error
-flags; cancellation/progress decoding; bounded in-flight ID and progress tracking.
-Client support includes modern discovery and explicit legacy initialization for
-2025-11-25 / 2025-06-18, paginated tool discovery, calls, correlated responses,
-progress, cancellation, late-response rejection, and optional stdio process I/O.
+| Boundary | Provided primitives |
+|---|---|
+| Tool client/server | Discovery, list/call, pagination, multimodal results, progress, cancellation, ID correlation |
+| Streamable HTTP | Modern POST-only and legacy POST/GET/DELETE envelopes; JSON/SSE; sessions and resume metadata for legacy only |
+| SSE | Incremental caller-buffered decoder, encoder, comments, BOM/UTF-8 handling, backpressure and exact capacity errors |
+| Legacy HTTP+SSE | Same-origin endpoint negotiation and separate message stream; no implicit credential forwarding or tool replay |
+| Other MCP methods | Explicitly enabled resource/prompt/completion/logging routes, callback and MRTR envelopes, subscription validation, version-specific task messages |
+| Optional I/O | Real stdio process adapter and bounded HTTP/1.1 framing over supplied streams |
 
-This is a **tools-oriented protocol core**, not a complete MCP SDK. MRTR,
-subscriptions, resources and prompts routing, sampling, elicitation, authorization,
-and HTTP/TLS/SSE implementations are not implemented here. Modern `input_required`
-is surfaced distinctly for explicit caller handling, never automatically continued.
-HTTP/custom transports supply complete messages through the transport boundary. The generic
-RPC types preserve messages for application-owned extensions. Do not describe
-this tools profile as full MCP conformance.
+The new transport and extension APIs are available in this source checkout;
+published 0.2.0 predates them. See [HTTP](docs/HTTP.md) and
+[extensions](docs/EXTENSIONS.md) for the exact contracts and executable examples.
+See [validation](docs/VALIDATION.md) for reproducible tests and benchmark limits.
+A local modern HTTP server and client can be run in separate terminals:
+
+```sh
+cargo run --locked --features std --example mcp_http -- server 8080 sse
+cargo run --locked --features std --example mcp_http -- client 127.0.0.1:8080
+```
+
+Use `json` instead of `sse` to exercise a single-JSON HTTP response. The example
+binds only to loopback and exposes only echo. For remote HTTPS, inject a verified
+TLS stream or connect the no-std protocol adapter to an existing HTTP stack.
+
+Legacy single-message negotiation covers 2024-11-05, 2025-03-26, 2025-06-18 and
+2025-11-25. Modern requests use 2026-07-28. This is a set of protocol and transport
+primitives, not an automatic agent, OAuth client, task worker or storage service.
+It is not a certification that every optional extension or third-party server
+conforms. JSON-RPC batches are not accepted. Application-owned callbacks, task
+execution, policy, replay storage and timers remain explicit.
 
 ## Memory contract
 

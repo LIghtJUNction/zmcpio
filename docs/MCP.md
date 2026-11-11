@@ -1,9 +1,9 @@
-# MCP tools profile
+# MCP protocol boundaries
 
-Client behavior is described in [CLIENT.md](CLIENT.md). The server's legacy
-profile remains 2025-11-25; the new client additionally accepts a server selecting
-the compatible 2025-06-18 tools profile. Older batch-based revisions are not
-advertised. Modern discovery/list responses include private, zero-TTL cache
+Client behavior is described in [CLIENT.md](CLIENT.md). Explicit legacy
+single-message negotiation covers 2024-11-05, 2025-03-26, 2025-06-18 and
+2025-11-25. The server selects a supported requested revision or offers the
+latest supported legacy revision. JSON-RPC batches are not accepted. Modern discovery/list responses include private, zero-TTL cache
 hints; the client does not cache or grant permission from those hints.
 
 Normative references checked 2026-11-11:
@@ -39,13 +39,17 @@ unknown/completed IDs. Tracker permits modern ID reuse after completion or legac
 connection-wide retention. Retention exhausts a caller-sized slot table rather
 than allocating. Progress monotonicity is enforced by Tracker when used.
 
-HTTP headers must be validated by the transport adapter, which owns status codes,
-authentication, Origin checks, request size limits, SSE, reconnect and disconnect
-semantics. HttpHeaders checks the tools-profile routing fields; it is not a
-complete HTTP implementation. WebSocket/TCP adapters are custom transports, not a
-claim that those transports are official MCP bindings.
+HTTP headers must be validated before side effects. Use
+`http::ServerConfig::validate` for standard headers and security policy, then
+`http::parameters`/`validate_parameter_headers` for the selected tool schema's
+mirrored parameters. The older `mcp::HttpHeaders` helper is only the original
+tools-profile check and is not a complete modern HTTP validator.
+See [HTTP](HTTP.md) for version-specific status/cancellation/session rules.
 
-Unsupported profiles: MRTR, subscriptions, prompts/resources routing, sampling,
-elicitation, roots and authorization. Capabilities for unimplemented methods are
-not advertised. An official discovery fixture is checked; no claim is made of
-passing a complete official conformance suite.
+Resources, prompts, completion, legacy logging and callbacks, modern MRTR and
+subscriptions, and task messages have explicit opt-in wire boundaries; see
+[EXTENSIONS.md](EXTENSIONS.md). The host implements the work and only advertises
+capabilities it actually provides. OAuth flows, general JSON Schema validation,
+persistent task/replay storage and automatic execution remain outside this crate.
+An official discovery fixture and adversarial/independent-peer tests are checked;
+no claim is made of passing a complete official conformance suite.

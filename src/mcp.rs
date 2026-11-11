@@ -734,7 +734,9 @@ fn nonnegative(value: Value<'_>) -> Result<f64, Error> {
     }
 }
 
-/// Validate the HTTP routing envelope without performing HTTP I/O.
+/// Original tools-profile routing check, retained for source compatibility.
+/// New HTTP adapters should use `crate::http::ServerConfig::validate` and the
+/// schema-aware parameter helpers; this type is not a full HTTP validator.
 /// The adapter must turn a mismatch into HTTP 400 / MCP -32020.
 pub struct HttpHeaders<'a> {
     pub protocol_version: &'a str,
