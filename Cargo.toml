@@ -1,9 +1,9 @@
 [package]
 name = "zmcpio"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.99.1"
-description = "Bounded, allocation-free, transport-independent MCP protocol primitives"
+description = "Bounded MCP client/server primitives tightly integrated with zcall"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/LIghtJUNction/zmcpio"
 readme = "README.md"
@@ -16,6 +16,7 @@ default = []
 std = []
 
 [dependencies]
+zcall = { version = "=0.1.2", default-features = false }
 
 [dev-dependencies]
 
@@ -28,6 +29,10 @@ exclude = ["comparison"]
 [[bench]]
 name = "core"
 harness = false
+
+[[example]]
+name = "mcp_client"
+required-features = ["std"]
 
 [profile.release]
 lto = "thin"

@@ -1,7 +1,19 @@
 #![no_std]
 #![forbid(unsafe_code)]
-//! Caller-buffered MCP primitives. No I/O, allocation, executor, or model dependency.
+//! Caller-buffered MCP client/server primitives and a zcall tool bridge.
+//! The core performs no I/O or allocation; stdio process I/O is opt-in.
 
+#[cfg(feature = "std")]
+extern crate std;
+
+/// Re-export the exact model-call contract used by the bridge.
+pub use zcall;
+
+#[cfg(feature = "std")]
+pub mod stdio;
+
+pub mod bridge;
+pub mod client;
 pub mod json;
 pub mod mcp;
 pub mod notifications;
@@ -39,6 +51,9 @@ pub enum ErrorKind {
     State,
     DuplicateId,
     UnknownId,
+    RequestSlots,
+    UnexpectedResponse,
+    UnsupportedResult,
 }
 impl Error {
     pub(crate) const fn new(kind: ErrorKind, offset: usize) -> Self {

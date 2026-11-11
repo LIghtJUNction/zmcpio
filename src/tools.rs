@@ -136,6 +136,9 @@ impl Server<'_> {
             w.raw(b",\"nextCursor\":");
             w.text(cursor);
         }
+        if context.era == Era::Modern {
+            w.raw(b",\"ttlMs\":0,\"cacheScope\":\"private\"");
+        }
         w.raw(b"}}");
         w.finish()
     }

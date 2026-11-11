@@ -212,7 +212,7 @@ impl<'a> Server<'a> {
             w.raw(LEGACY_PROTOCOL_VERSION.as_bytes());
             w.raw(b"\"],\"capabilities\":");
             self.write_capabilities(&mut w, era);
-            w.raw(b"}}");
+            w.raw(b",\"ttlMs\":0,\"cacheScope\":\"private\"}}");
             return w.finish().map(Action::Reply);
         }
         let context = Context {

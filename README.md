@@ -1,8 +1,9 @@
 # zmcpio
 
-Bounded MCP protocol primitives for applications that own their transport,
-authorization and scheduling. The library is `no_std`, forbids unsafe Rust,
-and has no normal, development, build, optional or target-specific dependencies.
+Bounded MCP client/server primitives for applications that own authorization and
+scheduling. The protocol core is `no_std`, allocation-free and forbids unsafe
+Rust. `zcall` is its only direct third-party dependency; `zconv` is transitive.
+The optional `std` feature adds a real blocking stdio server-process connection.
 
 The crate is named `zmcpio` on crates.io and the Rust API is imported as
 `zmcpio`. The former project name, `zmcp`, belongs to a different crates.io
@@ -12,11 +13,11 @@ publisher and **must not** be used as a dependency for this implementation.
 
 ```toml
 [dependencies]
-zmcpio = { version = "0.1", default-features = false }
+zmcpio = { version = "0.2", default-features = false }
 ```
 
-`zmcpio` has no third-party dependencies or allocator requirement. The `std`
-feature is optional; protocol parsing remains `no_std` in either configuration.
+Enable `features = ["std"]` for `stdio::StdioTransport`. The protocol core and
+`zcall` bridge do not require an allocator. Process startup may allocate in std.
 
 ## Boundary
 
@@ -25,18 +26,21 @@ feature is optional; protocol parsing remains `no_std` in either configuration.
 runs its tool, then calls `Server::tool_result`. No agent loop, provider adapter,
 HTTP stack, database, runtime, or model dependency is included.
 
-`zharness` and `zmcpio` are sibling components, not dependencies of each other:
+`zharness` and `zmcpio` remain independent components, sharing the `zcall` contract:
 
 ```text
 application
-  +-- zmcpio           MCP wire messages and transport boundaries
+  +-- zmcpio           MCP client/server, stdio, zcall tool bridge
+  |     +-- zcall      shared model/tool types (re-exported as zmcpio::zcall)
   +-- zharness         tool registry, execution boundary, model bridge
         +-- zcall      model lifecycle
               +-- zconv
 ```
 
-This preserves zharness's sole direct dependency on zcall. A standalone MCP
-server does not bring model-conversion code into its dependency graph.
+`Client` encodes requests and correlates replies using bounded caller-owned
+pending slots. `bridge` converts discovered MCP tools into `zcall::v1::ToolDefinition`,
+accepts complete `Content::ToolCall` or streaming `ReadyTool`, and appends results
+through `Request::append_tool_result`. MCP IDs and model call IDs remain distinct.
 
 ## Use from the source checkout
 
@@ -44,11 +48,16 @@ server does not bring model-conversion code into its dependency graph.
 cargo test --locked --all-targets
 cargo run --locked --example basic
 cargo run --locked --example mcp_stdio
+cargo run --locked --example zcall_tools
+cargo build --locked --features std --example mcp_stdio --example mcp_client
+target/debug/examples/mcp_client target/debug/examples/mcp_stdio echo '{"text":"hello"}'
 ```
 
 The stdio example implements only an explicitly allowlisted `echo` tool. It uses
 bounded LF framing and keeps diagnostics off stdout. See [MCP](docs/MCP.md),
 [architecture](docs/ARCHITECTURE.md), and [security](docs/SECURITY.md).
+See the [client and zcall guide](docs/CLIENT.md) for lifetimes, cancellation,
+pagination, error policies and custom transports. On Windows use `.exe` paths.
 
 ## Implemented profile
 
@@ -57,10 +66,15 @@ per-request version and client capabilities, discovery, tools/list and tools/cal
 explicit 2025-11-25 initialization/initialized/ping compatibility; pagination
 cursors; text/image/audio/resource content; structured results; execution-error
 flags; cancellation/progress decoding; bounded in-flight ID and progress tracking.
+Client support includes modern discovery and explicit legacy initialization for
+2025-11-25 / 2025-06-18, paginated tool discovery, calls, correlated responses,
+progress, cancellation, late-response rejection, and optional stdio process I/O.
 
 This is a **tools-oriented protocol core**, not a complete MCP SDK. MRTR,
 subscriptions, resources and prompts routing, sampling, elicitation, authorization,
-and HTTP/SSE transport implementations are not implemented here. The generic
+and HTTP/TLS/SSE implementations are not implemented here. Modern `input_required`
+is surfaced distinctly for explicit caller handling, never automatically continued.
+HTTP/custom transports supply complete messages through the transport boundary. The generic
 RPC types preserve messages for application-owned extensions. Do not describe
 this release candidate as full MCP conformance.
 

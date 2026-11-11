@@ -18,6 +18,18 @@ not re-execute a side effect. On input framing capacity failure, retain accepted
 bytes and submit only the unconsumed suffix. A cancelled request is an application
 signal, not a guarantee that an already-started external operation was undone.
 
-The library has no unsafe code and does not link alloc. The std examples and
-benchmark use standard-library I/O outside the protocol core. Benchmark allocator
-instrumentation, when enabled, is isolated from the published library.
+The protocol core and zcall bridge have no unsafe code or allocator use. The
+optional stdio adapter and std examples use standard-library process/I/O APIs.
+Benchmark allocator instrumentation is isolated from the published library.
+
+A discovered tool is not authorized merely because a server advertises it or a
+model selects it. Apply allowlists and schema/business validation before sending
+the encoded tools/call. Treat returned resources, URLs and instructions as data;
+the library never fetches or executes them. MCP IDs and model call IDs must be
+correlated through the bridge Invocation, not assumed equal.
+
+After a partial transport write the operation may already be running remotely.
+The stdio writer becomes unusable rather than automatically resending. Cancelling
+or abandoning a request does not roll back work. The process adapter executes the
+explicit Command without inserting a shell; choose its executable, environment
+and arguments deliberately. It manages the direct child, not a process tree.
