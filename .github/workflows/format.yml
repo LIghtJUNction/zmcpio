@@ -12,10 +12,10 @@ concurrency:
   cancel-in-progress: false
 jobs:
   format:
-    if: github.repository == 'LIghtJUNction/zmcp' && github.ref == 'refs/heads/main'
+    if: github.repository == 'LIghtJUNction/zmcpio' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     env:
-      ZMCP_BENCH_SMOKE: '1'
+      ZMCPIO_BENCH_SMOKE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

@@ -6,11 +6,20 @@ from the trusted default branch. The plan checks package-name ownership and that
 the target version does not already exist. All declared dependencies must be
 published, exact and not yanked. Network/authentication failures stop the workflow.
 
-The 2026-11-11 public registry lookup found zmcp 0.0.1 owned by `evolutionengine`.
-It is not owned by the currently connected LIghtJUNction account. Publishing this
-repository as zmcp is therefore blocked. Keep the repository name; select a new
-verified registry package name or obtain ownership before a first publication.
-Do not install the existing 0.0.1 expecting this code.
+The old `zmcp` package name has a pre-existing release owned by another account.
+The package and repository now consistently use `zmcpio`. Its absence from the
+public crates.io index was checked on 2026-11-11, but only a successful registry
+upload reserves the name; the workflow repeats a live collision check.
+
+To publish the first release, use the **Release** workflow on `main` with
+`version=0.1.0` and `publish=true`, because a default patch bump from the
+unreleased manifest version would select `0.1.1`. To publish without a manual
+workflow dispatch, add or update `.github/release-request.txt` on `main` with
+the intended SemVer version as its only content. Only pushes changing that
+specific file trigger the release workflow automatically; ordinary code pushes
+run CI without publishing. Both paths perform the same registry preflight and
+cross-platform validation before publishing. Do not modify the request file
+again for a version already on crates.io.
 
 Release validation runs on Linux, Windows and macOS with stable and MSRV. Each
 job updates Cargo.toml/Cargo.lock and checks the actual candidate. Publication

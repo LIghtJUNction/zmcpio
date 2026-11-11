@@ -1,4 +1,4 @@
-use zmcp::{
+use zmcpio::{
     json::{Document, Limits, Token},
     mcp::{Action, Notice, Server},
     notifications,

@@ -1,25 +1,35 @@
-# zmcp
+# zmcpio
 
 Bounded MCP protocol primitives for applications that own their transport,
 authorization and scheduling. The library is `no_std`, forbids unsafe Rust,
 and has no normal, development, build, optional or target-specific dependencies.
 
-**Unreleased.** The crates.io name `zmcp` already has an unrelated-or-unverified
-0.0.1 registration. Do not install that version expecting this implementation.
-Publication is blocked until package ownership or a new package name is verified.
+The crate is named `zmcpio` on crates.io and the Rust API is imported as
+`zmcpio`. The former project name, `zmcp`, belongs to a different crates.io
+publisher and **must not** be used as a dependency for this implementation.
+
+## Install
+
+```toml
+[dependencies]
+zmcpio = { version = "0.1", default-features = false }
+```
+
+`zmcpio` has no third-party dependencies or allocator requirement. The `std`
+feature is optional; protocol parsing remains `no_std` in either configuration.
 
 ## Boundary
 
-`zmcp` parses complete JSON-RPC messages and returns borrowed actions.
+`zmcpio` parses complete JSON-RPC messages and returns borrowed actions.
 `Action::CallTool` does not execute anything. An application checks policy,
 runs its tool, then calls `Server::tool_result`. No agent loop, provider adapter,
 HTTP stack, database, runtime, or model dependency is included.
 
-`zharness` and `zmcp` are sibling components, not dependencies of each other:
+`zharness` and `zmcpio` are sibling components, not dependencies of each other:
 
 ```text
 application
-  +-- zmcp             MCP wire messages and transport boundaries
+  +-- zmcpio           MCP wire messages and transport boundaries
   +-- zharness         tool registry, execution boundary, model bridge
         +-- zcall      model lifecycle
               +-- zconv

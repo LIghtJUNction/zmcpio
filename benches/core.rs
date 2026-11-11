@@ -4,7 +4,7 @@ use std::{
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
 };
-use zmcp::{
+use zmcpio::{
     json::{Document, Limits, Token},
     mcp::{Action, Server},
     tools::{Content, Tool, ToolResult},
@@ -35,7 +35,7 @@ unsafe impl GlobalAlloc for Counter {
 static COUNTER: Counter = Counter;
 fn measure(name: &str, size: usize, memory: usize, mut f: impl FnMut()) {
     let smoke =
-        std::env::var_os("ZMCP_BENCH_SMOKE").is_some() || std::env::args().any(|a| a == "--test");
+        std::env::var_os("ZMCPIO_BENCH_SMOKE").is_some() || std::env::args().any(|a| a == "--test");
     let samples = if smoke { 11 } else { 501 };
     let batch = if smoke { 16 } else { 512 };
     let mut timings = Vec::with_capacity(samples);

@@ -2,9 +2,9 @@
 
 Source revision: `71db6844e2f1d9f38ff94150e90c54db444d021a`.
 Full benchmark and candidate-package verification:
-https://github.com/LIghtJUNction/zmcp/actions/runs/42959252983
+https://github.com/LIghtJUNction/zmcpio/actions/runs/42959252983
 Six-way cross-platform CI:
-https://github.com/LIghtJUNction/zmcp/actions/runs/42959252840
+https://github.com/LIghtJUNction/zmcpio/actions/runs/42959252840
 Both runs completed successfully. No crate was published.
 
 Environment: GitHub-hosted Azure x86_64 VM, 4 available virtual CPUs, host CPU
@@ -13,7 +13,7 @@ rustc 1.99.1 (58cf8f9c3 2026-10-13), LLVM 23.1.1. Shared virtualized hardware;
 power policy and neighboring workloads were not controlled.
 
 Reproduce with `cargo bench --locked --bench core` at the recorded revision,
-without ZMCP_BENCH_SMOKE. Mean latency is amortized over a batch; p50/p95/p99 are
+without ZMCPIO_BENCH_SMOKE. Mean latency is amortized over a batch; p50/p95/p99 are
 individually timed calls including clock overhead. Throughput derives from mean.
 
 ## Protocol operations

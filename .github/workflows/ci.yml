@@ -17,7 +17,7 @@ jobs:
         rust: [stable, '1.99.1']
     runs-on: ${{ matrix.os }}
     env:
-      ZMCP_BENCH_SMOKE: '1'
+      ZMCPIO_BENCH_SMOKE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

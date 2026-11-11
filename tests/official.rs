@@ -1,5 +1,5 @@
 //! Official MCP 2026-07-28 schema example, not a claim of full conformance-suite coverage.
-use zmcp::{
+use zmcpio::{
     json::{Document, Limits, Token},
     mcp::{Action, Server},
     rpc::{self, Message},

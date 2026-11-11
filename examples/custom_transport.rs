@@ -1,5 +1,5 @@
 use core::convert::Infallible;
-use zmcp::{
+use zmcpio::{
     json::{Limits, Token},
     mcp::{Action, Server},
     transport::{MessageReader, MessageWriter, TransportError},

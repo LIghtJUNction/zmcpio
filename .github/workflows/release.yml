@@ -1,5 +1,8 @@
 name: Release
 on:
+  push:
+    branches: [main]
+    paths: ['.github/release-request.txt']
   workflow_dispatch:
     inputs:
       bump:
@@ -22,7 +25,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   plan:
-    if: github.repository == 'LIghtJUNction/zmcp' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    if: github.repository == 'LIghtJUNction/zmcpio' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.plan.outputs.version }}
@@ -33,10 +36,16 @@ jobs:
       - run: python scripts/test_release.py
       - id: plan
         env:
-          BUMP: ${{ inputs.bump }}
-          MANUAL_VERSION: ${{ inputs.version }}
-          PUBLISH: ${{ inputs.publish }}
-        run: python scripts/release.py plan
+          BUMP: ${{ inputs.bump || 'patch' }}
+          MANUAL_VERSION: ${{ inputs.version || '' }}
+          PUBLISH: ${{ github.event_name == 'push' && 'true' || inputs.publish }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == 'push' ]]; then
+            MANUAL_VERSION=$(< .github/release-request.txt)
+            export MANUAL_VERSION PUBLISH=true
+          fi
+          python scripts/release.py plan
   validate:
     needs: plan
     strategy:
@@ -47,7 +56,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.plan.outputs.version }}
-      ZMCP_BENCH_SMOKE: '1'
+      ZMCPIO_BENCH_SMOKE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -79,7 +88,7 @@ jobs:
       - run: cargo package --locked
       - run: cargo publish --dry-run --locked
   publish:
-    if: inputs.publish
+    if: github.event_name == 'push' || inputs.publish
     needs: [plan, validate]
     runs-on: ubuntu-latest
     permissions:
@@ -87,7 +96,7 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-      ZMCP_BENCH_SMOKE: '1'
+      ZMCPIO_BENCH_SMOKE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:

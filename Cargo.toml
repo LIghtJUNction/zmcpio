@@ -1,11 +1,11 @@
 [package]
-name = "zmcp"
+name = "zmcpio"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.99.1"
 description = "Bounded, allocation-free, transport-independent MCP protocol primitives"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/LIghtJUNction/zmcp"
+repository = "https://github.com/LIghtJUNction/zmcpio"
 readme = "README.md"
 keywords = ["mcp", "json-rpc", "no-std", "sans-io"]
 categories = ["no-std", "parser-implementations"]

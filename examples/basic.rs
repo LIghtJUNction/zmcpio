@@ -1,8 +1,8 @@
-use zmcp::{
+use zmcpio::{
     json::{Limits, Token},
     mcp::{Action, Server},
 };
-fn main() -> Result<(), zmcp::Error> {
+fn main() -> Result<(), zmcpio::Error> {
     let mut server = Server::new("example", "1");
     let mut tokens = [Token::EMPTY; 64];
     let mut output = [0; 1024];

@@ -1,6 +1,6 @@
-//! A bounded echo tool server. The application, not zmcp, executes the tool.
+//! A bounded echo tool server. The application, not zmcpio, executes the tool.
 use std::io::{self, BufRead, Write};
-use zmcp::{
+use zmcpio::{
     json::{Document, Limits, Token},
     mcp::{Action, Server},
     tools::{Content, Tool, ToolResult},
@@ -19,7 +19,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Return validated arguments as text",
         schema.root(),
     )?];
-    let mut server = Server::new("zmcp-echo", env!("CARGO_PKG_VERSION"));
+    let mut server = Server::new("zmcpio-echo", env!("CARGO_PKG_VERSION"));
     let mut tokens = [Token::EMPTY; 1024];
     let mut frame_storage = [0; 65536];
     let mut decoder = LineDecoder::new(&mut frame_storage, 65536);

@@ -48,7 +48,7 @@ def next_version(current, bump='patch', manual=''):
     return result
 
 def get_json(path, allow_missing=False):
-    request = urllib.request.Request('https://crates.io/api/v1/' + path, headers={'User-Agent': 'zmcp-release-preflight/0.1 (https://github.com/LIghtJUNction/zmcp)'})
+    request = urllib.request.Request('https://crates.io/api/v1/' + path, headers={'User-Agent': 'zmcpio-release-preflight/0.1 (https://github.com/LIghtJUNction/zmcpio)'})
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             return json.load(response)

@@ -1,4 +1,4 @@
-use zmcp::{
+use zmcpio::{
     ErrorKind,
     json::{Document, Limits, Token},
     rpc::{self, Id, Message},

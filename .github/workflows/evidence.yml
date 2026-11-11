@@ -21,16 +21,16 @@ jobs:
           rustup default 1.99.1
       - name: Capture source, environment and full benchmark
         run: |
-          mkdir -p "$RUNNER_TEMP/zmcp-evidence"
+          mkdir -p "$RUNNER_TEMP/zmcpio-evidence"
           {
             git rev-parse HEAD
             rustc -Vv
             uname -a
             lscpu
-          } > "$RUNNER_TEMP/zmcp-evidence/environment.txt"
-          cargo bench --locked --bench core > "$RUNNER_TEMP/zmcp-evidence/benchmark.csv"
-          cat "$RUNNER_TEMP/zmcp-evidence/benchmark.csv"
-          git archive --format=tar.gz -o "$RUNNER_TEMP/zmcp-evidence/source.tar.gz" HEAD
+          } > "$RUNNER_TEMP/zmcpio-evidence/environment.txt"
+          cargo bench --locked --bench core > "$RUNNER_TEMP/zmcpio-evidence/benchmark.csv"
+          cat "$RUNNER_TEMP/zmcpio-evidence/benchmark.csv"
+          git archive --format=tar.gz -o "$RUNNER_TEMP/zmcpio-evidence/source.tar.gz" HEAD
       - id: candidate
         env:
           BUMP: patch
@@ -39,7 +39,7 @@ jobs:
       - name: Exercise candidate bump and package verification without credentials
         env:
           VERSION: ${{ steps.candidate.outputs.version }}
-          ZMCP_BENCH_SMOKE: '1'
+          ZMCPIO_BENCH_SMOKE: '1'
         run: |
           python scripts/test_release.py
           python scripts/release.py apply
@@ -53,7 +53,7 @@ jobs:
           cargo publish --dry-run --locked
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: zmcp-evidence-${{ github.sha }}
-          path: ${{ runner.temp }}/zmcp-evidence/
+          name: zmcpio-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/zmcpio-evidence/
           if-no-files-found: error
           retention-days: 30

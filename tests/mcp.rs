@@ -1,4 +1,4 @@
-use zmcp::{
+use zmcpio::{
     ErrorKind,
     json::{Document, Limits, Token},
     mcp::{Action, Era, LegacyState, Notice, Server},
@@ -16,7 +16,7 @@ fn modern(method: &str, fields: &str) -> String {
 #[test]
 fn legacy_initialization_is_transactional() {
     let raw = br#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}"#;
-    let mut server = Server::new("zmcp", "0.1.0");
+    let mut server = Server::new("zmcpio", "0.1.0");
     let mut t = [Token::EMPTY; 128];
     assert_eq!(
         server
