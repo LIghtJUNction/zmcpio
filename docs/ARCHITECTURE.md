@@ -22,7 +22,7 @@ Default bridging retains the whole result envelope as JSON for portability.
 The optional `stdio` module owns a spawned child and its pipes. Framing remains
 bounded and caller-buffered; std process creation is not allocation-free. It is
 blocking, with bounded graceful shutdown but no response-read deadline. Async
-I/O, HTTP/TLS, credentials and scheduling remain application responsibilities.
+I/O runtimes, TLS verification, credentials and scheduling remain application responsibilities.
 
 Offsets use u32 to keep each token compact. Inputs larger than u32::MAX are
 rejected. Recursive descent is bounded to at most 64 container levels even when a
@@ -40,3 +40,22 @@ The application must track concurrent requests, retain borrowed storage until
 completion, authorize execution, schedule or cancel work, and deliver exactly one
 response. The server exposes these pieces; it does not secretly do them. Calls
 may finish in a different order because response IDs are retained explicitly.
+
+## HTTP and extension boundaries
+
+`http` validates the MCP HTTP envelope independently from socket ownership.
+`sse` turns incremental body bytes into complete events with bounded storage;
+`legacy_sse` validates the old two-endpoint handshake without granting access to
+an arbitrary returned URL. `http_io` is optional blocking HTTP/1.1 framing with
+Content-Length/chunked/close-delimited bodies and an explicit reuse policy.
+
+`extensions` identifies standard methods, validates required wire fields and
+provides subscription/task/callback envelope helpers. Servers opt into exact
+handlers; clients keep bounded request correlation. Returning an action does
+not read a file, invoke a model, prompt a user, create a task worker, or grant
+permission. Each such operation is an application decision.
+
+Modern HTTP has no protocol session or GET resume stream. Legacy HTTP has
+optional identity-bound sessions and optional event replay. Keeping these rules
+separate prevents a network disconnect from being interpreted as the wrong
+protocol's cancellation signal.

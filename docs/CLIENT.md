@@ -2,7 +2,7 @@
 
 `zmcpio` can act as the client of an MCP tool server. The default core encodes
 requests and validates replies without I/O or allocation. The optional `std`
-adapter starts a real stdio server process. `zcall` is the only direct dependency;
+adapters start a real stdio server process or frame HTTP/1.1 on supplied streams. `zcall` is the only direct dependency;
 the exact same types are available through `zmcpio::zcall::v1`.
 
 ## Run a real server connection
@@ -41,14 +41,18 @@ or response payload and allocates no dynamically growing request table.
 
 Legacy mode starts with `initialize`. A supported initialize response moves to
 `AwaitInitialized`; encode and successfully send `initialized` before requesting
-tools. Client negotiation accepts the tested tools profiles `2025-11-25` and
-`2025-06-18`. Other versions are rejected; this is not a claim of supporting old
-batch-based MCP revisions. `protocol_version()` exposes the selected version.
+tools. Client negotiation accepts the single-message tools baselines `2025-11-25`,
+`2025-06-18`, `2025-03-26` and `2024-11-05`. Use `initialize_with_version` for an
+explicit initial revision. Only 2025-03-26 supports the opt-in bounded `batch` API;
+`receive` still takes one message, so batch consumers explicitly iterate entries.
+`protocol_version()`
+exposes the selected version; unknown revisions are rejected.
 
 Modern mode uses `2026-07-28` metadata on every request and is immediately ready.
 `discover` is optional and exposes supported versions, capabilities and optional
 server identity. There is no automatic legacy fallback or retry of tools/call.
-The client advertises no sampling/elicitation callbacks it does not implement.
+`with_client_capabilities` explicitly declares callbacks implemented by the host;
+the default declares none. Advertised capabilities do not authorize execution.
 
 `list_tools` returns one borrowed `ToolPage` at a time. Its cursor is opaque:
 decode it into retained caller storage before reusing the response input/tokens.
@@ -120,8 +124,9 @@ input schemas or permission grants. MCP schemas do not imply a provider's strict
 schema mode, so discovered definitions explicitly set `strict=false`.
 
 JSON-RPC failures and modern `input_required` are not completed tool results.
-Handle them separately. The client validates the basic input-required envelope
-and exposes it without implementing MRTR continuation or executing callbacks.
+Handle them separately. The client validates the input-required envelope and exposes it without executing
+callbacks. See [extensions](EXTENSIONS.md) for explicit continuation using the
+original parameters, opaque request state and caller-approved input responses.
 The bridge cannot consume it as a successful `CallResult`.
 
 ## Ownership, transports and limits
@@ -133,12 +138,17 @@ encoding, argument storage can be reused while identity storage remains retained
 Conversion into zcall validated JSON uses its public checked constructor and
 caller token scratch; it does not introduce an unchecked lifetime shortcut.
 
-The core works with complete messages supplied by any transport. There is **no
-built-in HTTP/TLS/SSE, OAuth or remote-URL client**. An HTTP integration owns its
-request headers, session IDs, status codes, authentication, SSE framing and
-connection lifecycle, then supplies decoded JSON messages to `Client::receive`.
-For modern HTTP cancellation close the applicable response stream; the provided
-`cancel` encoder emits the notification used by stdio, not an HTTP abort.
+The core works with complete messages supplied by any transport. The `http`,
+`sse` and `legacy_sse` modules now supply bounded protocol handling; optional
+`http_io` supplies blocking HTTP/1.1 framing on generic I/O streams.
+See [HTTP](HTTP.md) for real TCP examples, buffer ownership and TLS integration.
+There is no bundled TLS implementation, OAuth login UI, HTTP/2/3 wire stack,
+background reconnect loop, or unbounded remote-URL client.
+
+Close the response stream to cancel a modern HTTP request. For legacy HTTP or
+stdio, send the cancellation notification instead. A legacy disconnect alone
+does not cancel work. Resume a legacy stream with GET and a committed event ID;
+never repeat a side-effecting POST as a substitute for resumption.
 
 The client keeps a request pending after encoding cancellation because the peer
 may already have completed it. `abandon` is an explicit local timeout/cleanup

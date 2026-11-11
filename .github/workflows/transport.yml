@@ -1,0 +1,40 @@
+name: Transport regression
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: transport-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    env:
+      ZMCPIO_BENCH_SMOKE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+      - name: Compile and exercise all adapters
+        run: cargo +1.99.1 test --locked --all-targets --all-features
+      - name: Independent HTTP interoperability
+        run: python scripts/http_smoke.py
+      - name: Exercise explicit extensions example
+        run: cargo +1.99.1 run --locked --example mcp_extensions
+      - name: Verify allocation-free default core
+        run: cargo +1.99.1 test --locked --no-default-features
+      - name: Lint adapters
+        run: cargo +1.99.1 clippy --locked --all-targets --all-features -- -D warnings
+      - name: Measure transport primitives (release, 501 samples)
+        run: env -u ZMCPIO_BENCH_SMOKE cargo +1.99.1 bench --locked --bench transport
+      - name: Formatting
+        if: always()
+        run: |
+          cargo +1.99.1 fmt --all
+          git diff --exit-code -- '*.rs'
+      - name: Audit dependency closure
+        run: python scripts/audit.py

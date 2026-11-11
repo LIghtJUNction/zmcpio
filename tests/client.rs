@@ -140,7 +140,7 @@ fn legacy_handshake_and_output_failures_are_transactional() {
 
 #[test]
 fn unsupported_legacy_version_never_becomes_ready() {
-    for unsupported in ["1900-01-01", "2024-11-05", "2025-03-26", PROTOCOL_VERSION] {
+    for unsupported in ["1900-01-01", "2025-01-01", PROTOCOL_VERSION] {
         let mut slots = [Pending::EMPTY; 1];
         let mut client = Client::new("test", "1", Era::Legacy, &mut slots);
         let mut output = [0; 1024];
@@ -416,8 +416,12 @@ fn out_of_order_responses_are_decoded_for_their_request_kind() {
 
 #[test]
 fn input_required_is_not_a_final_tool_result_or_an_automatic_retry() {
+    let mut cap_tokens = [Token::EMPTY; 16];
+    let caps = parse(br#"{"elicitation":{"form":{}}}"#, &mut cap_tokens);
     let mut slots = [Pending::EMPTY; 1];
-    let mut client = Client::new("test", "1", Era::Modern, &mut slots);
+    let mut client = Client::new("test", "1", Era::Modern, &mut slots)
+        .with_client_capabilities(caps)
+        .unwrap();
     let mut output = [0; 2048];
     let mut tokens = [Token::EMPTY; 256];
     let call = client.call_tool("confirm", None, &mut output).unwrap();

@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — HTTP transports and opt-in protocol extensions
+
+- Add allocation-free SSE encoding/decoding and era-aware Streamable HTTP rules.
+- Add bounded optional HTTP/1.1 I/O with JSON/chunked SSE, strict framing, explicit
+  keepalive policy, interrupt recovery and terminal partial-write handling.
+- Add same-origin legacy HTTP+SSE endpoint negotiation and explicit older handshake
+  baselines without automatic tool retries.
+- Add exact-2025-03-26 bounded batch envelopes, atomic encoding and shared HTTP
+  validation; preserve strict single-message parsing in other revisions.
+- Add modern routing/custom-parameter header validation, security policy hooks,
+  caller-owned legacy sessions and resume metadata.
+- Add opt-in resource/prompt/completion/logging, callback/MRTR, subscription and
+  version-specific task wire boundaries; preserve application-owned execution.
+- Add real TCP and independent Python interoperability checks, adversarial tests,
+  transport benchmarks and documented scope/ownership requirements.
+- Preserve default no_std, the unsafe-code ban, exact dependency closure, and the
+  protected bump/CARGO_REGISTRY_TOKEN publication workflow.
+
+This change adds public Action/Event variants. Downstream exhaustive matches need
+updating; publish it with a minor bump (0.3.0), not a 0.2.x patch. Publication is
+still a separate explicit release-workflow action.
+
 ## 0.2.0 — MCP client and zcall integration
 
 - Add a caller-buffered MCP client with bounded pending slots, monotonic numeric

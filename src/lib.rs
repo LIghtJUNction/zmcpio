@@ -1,7 +1,8 @@
 #![no_std]
 #![forbid(unsafe_code)]
 //! Caller-buffered MCP client/server primitives and a zcall tool bridge.
-//! The core performs no I/O or allocation; stdio process I/O is opt-in.
+//! The core performs no I/O or allocation. Stdio process and HTTP/1.1 stream
+//! adapters are opt-in through `std`; TLS and application execution remain external.
 
 #[cfg(feature = "std")]
 extern crate std;
@@ -12,12 +13,20 @@ pub use zcall;
 #[cfg(feature = "std")]
 pub mod stdio;
 
+#[cfg(feature = "std")]
+pub mod http_io;
+
+pub mod batch;
 pub mod bridge;
 pub mod client;
+pub mod extensions;
+pub mod http;
 pub mod json;
+pub mod legacy_sse;
 pub mod mcp;
 pub mod notifications;
 pub mod rpc;
+pub mod sse;
 pub mod tools;
 pub mod tracker;
 pub mod transport;
