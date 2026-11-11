@@ -20,6 +20,7 @@ pub mod client;
 pub mod extensions;
 pub mod http;
 pub mod json;
+pub mod legacy_sse;
 pub mod mcp;
 pub mod notifications;
 pub mod rpc;

@@ -371,7 +371,13 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
         let remaining = match self.framing {
             Framing::Length(n) | Framing::Chunked { remaining: n, .. } => n,
             Framing::Eof => {
-                if self.reader.fill_buf()?.is_empty() {
+                let eof = loop {
+                    match self.reader.fill_buf() {
+                        Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                        result => break result?.is_empty(),
+                    }
+                };
+                if eof {
                     return Ok(0);
                 }
                 self.limit.saturating_sub(self.read)
@@ -431,17 +437,26 @@ impl<R: BufRead> Read for BodyReader<'_, R> {
 
 /// Read a bounded body completely; reject overflow, including one extra byte.
 /// For SSE use incremental reads instead, so long-lived streams are not buffered.
+fn read_retry<R: Read>(reader: &mut R, output: &mut [u8]) -> io::Result<usize> {
+    loop {
+        match reader.read(output) {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => return result,
+        }
+    }
+}
+
 pub fn read_body<R: Read>(reader: &mut R, output: &mut [u8]) -> io::Result<usize> {
     let mut used = 0usize;
     while used < output.len() {
-        let n = reader.read(&mut output[used..])?;
+        let n = read_retry(reader, &mut output[used..])?;
         if n == 0 {
             return Ok(used);
         }
         used += n;
     }
     let mut extra = [0];
-    if reader.read(&mut extra)? != 0 {
+    if read_retry(reader, &mut extra)? != 0 {
         return Err(capacity());
     }
     Ok(used)
@@ -594,10 +609,18 @@ pub fn start_sse<'a, W: Write>(
     writer: &'a mut W,
     headers: &[Header<'_>],
 ) -> io::Result<ChunkWriter<'a, W>> {
+    start_sse_with(writer, headers, Connection::Close)
+}
+
+pub fn start_sse_with<'a, W: Write>(
+    writer: &'a mut W,
+    headers: &[Header<'_>],
+    connection: Connection,
+) -> io::Result<ChunkWriter<'a, W>> {
     validate_headers(headers, false, true)?;
     writer.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n")?;
     write_headers(writer, headers)?;
-    writer.write_all(b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n")?;
+    write!(writer, "Transfer-Encoding: chunked\r\nConnection: {}\r\n\r\n", connection.header())?;
     writer.flush()?;
     Ok(ChunkWriter {
         writer,

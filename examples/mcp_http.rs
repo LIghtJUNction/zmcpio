@@ -3,7 +3,7 @@
 //! cargo run --features std --example mcp_http -- client 127.0.0.1:8080
 //! The demo is loopback-only, has no privileged tools, and is not a TLS server.
 use std::{
-    io::{BufReader, Read},
+    io::{BufReader, BufWriter, Read},
     net::{SocketAddr, TcpListener, TcpStream},
     time::Duration,
 };
@@ -34,9 +34,10 @@ fn deadline(socket: &TcpStream) -> Result<()> {
     socket.set_nodelay(true)?;
     Ok(())
 }
-fn serve(mut socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
+fn serve(socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
     deadline(&socket)?;
     let mut reader = BufReader::with_capacity(8192, socket.try_clone()?);
+    let mut socket = BufWriter::with_capacity(8192, socket);
     let mut head_bytes = [0; 8192];
     let head = http_io::read_head(&mut reader, &mut head_bytes)?;
     let mut headers = [Header { name: "", value: "" }; 64];
@@ -145,7 +146,10 @@ fn call(address: SocketAddr) -> Result<()> {
     let n = session.post_headers("tools/call", Some("echo"), &mut text)?;
     let mut headers = [Header { name: "", value: "" }; 32];
     let count = http_io::header_views(core::str::from_utf8(&text[..n])?, &mut headers)?;
-    http_io::write_request(&mut socket, "POST", "/mcp", &address.to_string(), &headers[..count], &output[..call.len])?;
+    {
+        let mut writer = BufWriter::with_capacity(8192, &mut socket);
+        http_io::write_request(&mut writer, "POST", "/mcp", &address.to_string(), &headers[..count], &output[..call.len])?;
+    }
     let mut reader = BufReader::with_capacity(8192, socket);
     let mut head_bytes = [0; 8192];
     let head = http_io::read_head(&mut reader, &mut head_bytes)?;

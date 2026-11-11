@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 subprocess.run(["cargo", "build", "--locked", "--features", "std", "--example", "mcp_http"], cwd=ROOT, check=True)
-EXE = ROOT / "target" / "debug" / ("mcp_http.exe" if sys.platform == "win32" else "mcp_http")
+EXE = ROOT / "target" / "debug" / "examples" / ("mcp_http.exe" if sys.platform == "win32" else "mcp_http")
 VERSION = "2026-07-28"
 
 

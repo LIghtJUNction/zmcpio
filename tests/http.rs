@@ -76,8 +76,8 @@ fn security_checks_precede_processing() {
     assert_eq!(cfg.validate(req, &bad_origin, &mut scratch), Err(HttpError::Forbidden));
     let denied = Policy { origin: true, authorized: false, session: true };
     assert_eq!(cfg.validate(req, &denied, &mut scratch), Err(HttpError::Unauthorized));
-    hs.push(Header { name: "Authorization", value: "Bearer a" });
-    hs.push(Header { name: "authorization", value: "Bearer b" });
+    hs.push(Header { name: "Authorization", value: "test-token-a" });
+    hs.push(Header { name: "authorization", value: "test-token-b" });
     assert_eq!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut scratch), Err(HttpError::InvalidHeader));
 }
 #[test]
@@ -247,6 +247,8 @@ fn custom_annotation_definition_rejections() {
         br#"{"type":"object","allOf":[{"properties":{"a":{"type":"string","x-mcp-header":"A"}}}]}"#,
         br#"{"type":"object","properties":{"a":{"type":"array","items":{"type":"string","x-mcp-header":"A"}}}}"#,
         br#"{"type":"object","$defs":{"a":{"type":"string","x-mcp-header":"A"}}}"#,
+        br#"{"type":"object","dependencies":{"a":{"properties":{"b":{"type":"string","x-mcp-header":"B"}}}}}"#,
+        br#"{"type":"object","properties":{"json":{"type":"string","contentSchema":{"properties":{"a":{"type":"string","x-mcp-header":"A"}}}}}}"#,
     ];
     for json in invalid {
         let mut tokens = [Token::EMPTY; 128];
@@ -300,4 +302,42 @@ fn explicit_2025_03_26_binding_accepts_missing_version_header() {
     let mut tokens = [Token::EMPTY; 32];
     let msg = message(LEGACY_LIST, &mut tokens);
     assert!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut []).is_ok());
+}
+
+#[test]
+fn header_body_mismatch_precedes_version_support() {
+    let mut tokens = [Token::EMPTY; 64];
+    let msg = message(MODERN_LIST, &mut tokens);
+    let hs = headers(Version::V2025_11_25);
+    for version in [Version::V2026_07_28, Version::V2025_11_25] {
+        let cfg = ServerConfig::stateless(version);
+        assert_eq!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut [0; 64]), Err(HttpError::HeaderMismatch));
+    }
+}
+#[test]
+fn modern_task_headers_mirror_task_id() {
+    let mut session = [];
+    let client = ClientSession::new(Version::V2026_07_28, &mut session);
+    for method in ["tasks/get", "tasks/update", "tasks/cancel"] {
+        let json = format!("{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"{method}\",\"params\":{{\"taskId\":\"t-42\",\"_meta\":{{\"io.modelcontextprotocol/protocolVersion\":\"2026-07-28\"}}}}}}");
+        let mut tokens = [Token::EMPTY; 64];
+        let Message::Request(req) = message(json.as_bytes(), &mut tokens) else { panic!(); };
+        let hs = [
+            Header { name: "MCP-Protocol-Version", value: "2026-07-28" },
+            Header { name: "Mcp-Method", value: method },
+            Header { name: "Mcp-Name", value: "t-42" },
+        ];
+        assert!(http::validate_standard_headers(&hs, req, &mut [0; 64]).is_ok());
+        assert!(http::validate_standard_headers(&hs[..2], req, &mut [0; 64]).is_err());
+        let mut out = [0; 512];
+        let n = client.post_headers(method, Some("t-42"), &mut out).unwrap();
+        assert!(std::str::from_utf8(&out[..n]).unwrap().contains("Mcp-Name: t-42\r\n"));
+        assert!(client.post_headers(method, None, &mut out).is_err());
+    }
+}
+#[test]
+fn draft7_property_dependency_arrays_are_not_schema_annotations() {
+    let mut st = [Token::EMPTY; 128];
+    let schema = Document::parse(br#"{"type":"object","dependencies":{"a":["b","x-mcp-header"]}}"#, &mut st, Limits::default()).unwrap().root();
+    assert!(http::parameters(schema, None, &mut [Parameter::EMPTY; 1]).is_ok());
 }
