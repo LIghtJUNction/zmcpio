@@ -19,7 +19,7 @@ checksum = "48036db39f0148be3536614d546448cc9a386ce30b43df901a2c779b9e1c1421"
 
 [[package]]
 name = "zmcpio"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "zcall",
 ]
