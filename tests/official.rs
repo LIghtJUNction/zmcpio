@@ -27,6 +27,6 @@ fn official_discover_request() {
     assert!(matches!(id, rpc::Id::String(s) if s.matches("discover-1")));
     assert_eq!(
         result.get("supportedVersions").unwrap().elements().count(),
-        2
+        5
     );
 }

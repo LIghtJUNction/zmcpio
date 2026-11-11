@@ -105,7 +105,10 @@ pub fn header_views<'a>(
 fn read_line<R: BufRead>(reader: &mut R, output: &mut [u8]) -> io::Result<usize> {
     let mut used = 0usize;
     loop {
-        let input = reader.fill_buf()?;
+        let input = match reader.fill_buf() {
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            result => result?,
+        };
         if input.is_empty() {
             return Err(io::Error::new(
                 io::ErrorKind::UnexpectedEof,
@@ -208,7 +211,9 @@ pub fn read_head<'a, R: BufRead>(
     }
     if method.is_some() && first != "HTTP/1.0" && third == "HTTP/1.1" {
         let host = head.header("host").ok_or_else(|| invalid("missing Host"))?;
-        if host.is_empty() {
+        if host.is_empty() || !host.bytes().all(|b| (33..127).contains(&b))
+            || host.contains(['/', '\\', '@', '#', '?'])
+        {
             return Err(invalid("empty Host"));
         }
     }
@@ -277,6 +282,9 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
         let mut line = [0; 1024];
         let n = read_line(self.reader, &mut line)?;
         let chunk_line = &line[..n - 2];
+        if !chunk_line.iter().all(|b| *b == b'\t' || (32..127).contains(b)) {
+            return Err(invalid("invalid chunk extension characters"));
+        }
         let size = chunk_line.split(|b| *b == b';').next().unwrap_or(b"");
         if size.is_empty() || !size.iter().all(u8::is_ascii_hexdigit) {
             return Err(invalid("invalid chunk size"));
@@ -347,7 +355,12 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
         if take == 0 {
             return Err(capacity());
         }
-        let n = self.reader.read(&mut output[..take])?;
+        let n = loop {
+            match self.reader.read(&mut output[..take]) {
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+                result => break result?,
+            }
+        };
         if n == 0 {
             if matches!(self.framing, Framing::Eof) {
                 return Ok(0);
@@ -418,6 +431,21 @@ fn write_headers<W: Write>(writer: &mut W, headers: &[Header<'_>]) -> io::Result
     Ok(())
 }
 
+/// Explicit connection reuse policy. Reuse only after consuming the complete body.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Connection {
+    Close,
+    KeepAlive,
+}
+impl Connection {
+    fn header(self) -> &'static str {
+        match self {
+            Self::Close => "close",
+            Self::KeepAlive => "keep-alive",
+        }
+    }
+}
+
 /// No redirects/retries. The caller must not send bearer credentials over plaintext.
 pub fn write_request<W: Write>(
     writer: &mut W,
@@ -426,6 +454,18 @@ pub fn write_request<W: Write>(
     host: &str,
     headers: &[Header<'_>],
     body: &[u8],
+) -> io::Result<()> {
+    write_request_with(writer, method, target, host, headers, body, Connection::Close)
+}
+
+pub fn write_request_with<W: Write>(
+    writer: &mut W,
+    method: &str,
+    target: &str,
+    host: &str,
+    headers: &[Header<'_>],
+    body: &[u8],
+    connection: Connection,
 ) -> io::Result<()> {
     if !token(method) || !target_valid(target)
         || host.is_empty()
@@ -437,7 +477,7 @@ pub fn write_request<W: Write>(
     validate_headers(headers, true, false)?;
     write!(writer, "{method} {target} HTTP/1.1\r\nHost: {host}\r\n")?;
     write_headers(writer, headers)?;
-    write!(writer, "Content-Length: {}\r\nConnection: close\r\n\r\n", body.len())?;
+    write!(writer, "Content-Length: {}\r\nConnection: {}\r\n\r\n", body.len(), connection.header())?;
     writer.write_all(body)?;
     writer.flush()
 }
@@ -466,6 +506,16 @@ pub fn write_response<W: Write>(
     headers: &[Header<'_>],
     body: &[u8],
 ) -> io::Result<()> {
+    write_response_with(writer, status, headers, body, Connection::Close)
+}
+
+pub fn write_response_with<W: Write>(
+    writer: &mut W,
+    status: u16,
+    headers: &[Header<'_>],
+    body: &[u8],
+    connection: Connection,
+) -> io::Result<()> {
     if !(200..600).contains(&status)
         || ((status == 204 || status == 304) && !body.is_empty())
     {
@@ -474,7 +524,10 @@ pub fn write_response<W: Write>(
     validate_headers(headers, false, false)?;
     write!(writer, "HTTP/1.1 {status} {}\r\n", reason(status))?;
     write_headers(writer, headers)?;
-    write!(writer, "Content-Length: {}\r\nConnection: close\r\n\r\n", body.len())?;
+    if status != 204 && status != 304 {
+        write!(writer, "Content-Length: {}\r\n", body.len())?;
+    }
+    write!(writer, "Connection: {}\r\n\r\n", connection.header())?;
     writer.write_all(body)?;
     writer.flush()
 }
@@ -489,23 +542,36 @@ pub fn start_sse<'a, W: Write>(
     write_headers(writer, headers)?;
     writer.write_all(b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n")?;
     writer.flush()?;
-    Ok(ChunkWriter { writer })
+    Ok(ChunkWriter { writer, failed: false })
 }
 pub struct ChunkWriter<'a, W> {
     writer: &'a mut W,
+    failed: bool,
 }
 impl<W: Write> ChunkWriter<'_, W> {
     /// Each supplied fragment may contain one or more complete SSE events.
     pub fn send(&mut self, data: &[u8]) -> io::Result<()> {
-        if !data.is_empty() {
-            write!(self.writer, "{:x}\r\n", data.len())?;
-            self.writer.write_all(data)?;
-            self.writer.write_all(b"\r\n")?;
-            self.writer.flush()?;
+        if self.failed {
+            return Err(invalid("chunk writer failed; close connection"));
         }
-        Ok(())
+        let result = (|| {
+            if !data.is_empty() {
+                write!(self.writer, "{:x}\r\n", data.len())?;
+                self.writer.write_all(data)?;
+                self.writer.write_all(b"\r\n")?;
+                self.writer.flush()?;
+            }
+            Ok(())
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
     }
     pub fn finish(self) -> io::Result<()> {
+        if self.failed {
+            return Err(invalid("chunk writer failed; close connection"));
+        }
         self.writer.write_all(b"0\r\n\r\n")?;
         self.writer.flush()
     }

@@ -36,16 +36,15 @@ fn modern_post_and_media_negotiation() {
     let msg = message(MODERN_LIST, &mut tokens);
     let mut hs = headers(cfg.version);
     let mut scratch = [0; 256];
-    let incoming = |hs| Incoming { method: Method::Post, headers: hs, message: Some(msg) };
-    assert_eq!(cfg.validate(incoming(&hs), &ALLOW, &mut scratch), Ok(ServerAction::Message { kind: BodyKind::Request }));
+    assert_eq!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut scratch), Ok(ServerAction::Message { kind: BodyKind::Request }));
     hs[1].value = "application/json";
-    assert_eq!(cfg.validate(incoming(&hs), &ALLOW, &mut scratch), Err(HttpError::NotAcceptable));
+    assert_eq!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut scratch), Err(HttpError::NotAcceptable));
     hs[1].value = "application/json, text/event-stream;q=0";
-    assert_eq!(cfg.validate(incoming(&hs), &ALLOW, &mut scratch), Err(HttpError::NotAcceptable));
+    assert_eq!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut scratch), Err(HttpError::NotAcceptable));
     hs[1].value = "APPLICATION/JSON;q=1, TEXT/EVENT-STREAM;q=0.5";
-    assert!(cfg.validate(incoming(&hs), &ALLOW, &mut scratch).is_ok());
+    assert!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut scratch).is_ok());
     hs[0].value = "text/plain";
-    assert_eq!(cfg.validate(incoming(&hs), &ALLOW, &mut scratch), Err(HttpError::UnsupportedMediaType));
+    assert_eq!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut scratch), Err(HttpError::UnsupportedMediaType));
 }
 #[test]
 fn modern_disallows_legacy_methods_and_ignores_sessions() {
@@ -286,9 +285,19 @@ fn custom_parameter_slot_capacity_and_missing_header() {
 #[test]
 fn error_body_is_valid_rpc_and_lists_supported_version() {
     let mut out = [0; 512];
-    let n = HttpError::UnsupportedVersion.write_rpc(None, Version::V2026_07_28, &mut out).unwrap();
+    let n = HttpError::UnsupportedVersion.write_rpc(None, Version::V2026_07_28, "unknown-version", &mut out).unwrap();
     let mut tokens = [Token::EMPTY; 64];
     let Message::Failure { error, .. } = message(&out[..n], &mut tokens) else { panic!(); };
     assert_eq!(error.code, -32022);
     assert_eq!(error.data.unwrap().get("supported").unwrap().elements().count(), 1);
+    assert!(error.data.unwrap().get("requested").unwrap().string().unwrap().matches("unknown-version"));
+}
+
+#[test]
+fn explicit_2025_03_26_binding_accepts_missing_version_header() {
+    let cfg = ServerConfig::stateless(Version::V2025_03_26);
+    let hs = [Header { name: "Accept", value: http::ACCEPT }, Header { name: "Content-Type", value: http::JSON }];
+    let mut tokens = [Token::EMPTY; 32];
+    let msg = message(LEGACY_LIST, &mut tokens);
+    assert!(cfg.validate(Incoming { method: Method::Post, headers: &hs, message: Some(msg) }, &ALLOW, &mut []).is_ok());
 }

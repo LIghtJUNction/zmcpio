@@ -17,6 +17,7 @@ pub const ACCEPT: &str = "application/json, text/event-stream";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Version {
+    V2025_03_26,
     V2025_06_18,
     V2025_11_25,
     V2026_07_28,
@@ -24,6 +25,7 @@ pub enum Version {
 impl Version {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::V2025_03_26 => "2025-03-26",
             Self::V2025_06_18 => "2025-06-18",
             Self::V2025_11_25 => "2025-11-25",
             Self::V2026_07_28 => "2026-07-28",
@@ -34,6 +36,7 @@ impl Version {
     }
     pub fn parse(value: &str) -> Result<Self, HttpError> {
         match value {
+            "2025-03-26" => Ok(Self::V2025_03_26),
             "2025-06-18" => Ok(Self::V2025_06_18),
             "2025-11-25" => Ok(Self::V2025_11_25),
             "2026-07-28" => Ok(Self::V2026_07_28),
@@ -124,6 +127,7 @@ impl HttpError {
         self,
         id: Option<Id<'_>>,
         supported: Version,
+        requested: &str,
         output: &mut [u8],
     ) -> Result<usize, crate::Error> {
         if self == Self::UnsupportedVersion {
@@ -131,7 +135,9 @@ impl HttpError {
             rpc::prefix(&mut w, id);
             w.raw(b",\"error\":{\"code\":-32022,\"message\":\"Unsupported protocol version\",\"data\":{\"supported\":[");
             w.text(supported.as_str());
-            w.raw(b"]}}}");
+            w.raw(b"],\"requested\":");
+            w.text(requested);
+            w.raw(b"}}}");
             w.finish()
         } else {
             rpc::failure(
@@ -281,13 +287,15 @@ impl ServerConfig {
             return Err(HttpError::BadRequest);
         }
         let initialize = matches!(incoming.message, Some(Message::Request(r)) if r.method.matches("initialize"));
-        let wire_version = header(headers, "mcp-protocol-version")?;
+        let wire_version = header(headers, "mcp-protocol-version").map_err(|e| {
+            if self.version.is_modern() { HttpError::HeaderMismatch } else { e }
+        })?;
         if self.version.is_modern() {
             if wire_version.is_none() {
                 return Err(HttpError::HeaderMismatch);
             }
-        } else if wire_version.is_none() && !initialize {
-            // This adapter does not advertise the older batch-based revisions.
+        } else if wire_version.is_none() && !initialize && self.version != Version::V2025_03_26 {
+            // Missing headers can only select an explicitly configured 2025-03-26 binding.
             return Err(HttpError::UnsupportedVersion);
         }
         if let Some(version) = wire_version

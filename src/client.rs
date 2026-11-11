@@ -5,6 +5,7 @@
 //! or abandon the request; never automatically repeat a side-effecting call.
 use crate::{
     Error, ErrorKind,
+    extensions::{self, Method},
     json::{Document, JsonString, Kind, Limits, Token, Value},
     mcp::{Era, LEGACY_PROTOCOL_VERSION, PROTOCOL_VERSION},
     notifications,
@@ -13,7 +14,12 @@ use crate::{
 };
 
 /// Tested legacy tools profiles. No implicit fallback between protocol eras.
-pub const LEGACY_COMPATIBLE_VERSIONS: [&str; 2] = [LEGACY_PROTOCOL_VERSION, "2025-06-18"];
+pub const LEGACY_COMPATIBLE_VERSIONS: [&str; 4] = [
+    LEGACY_PROTOCOL_VERSION,
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ClientState {
@@ -31,6 +37,7 @@ pub enum Operation {
     ListTools,
     CallTool,
     Ping,
+    Extension(Method),
 }
 
 /// One caller-owned outstanding-request slot. No input buffer is retained here.
@@ -281,6 +288,12 @@ pub enum Event<'a> {
     Pong {
         id: i64,
     },
+    /// Complete extension result. Application schemas and effects remain caller-owned.
+    ExtensionResult {
+        id: i64,
+        method: Method,
+        result: Value<'a>,
+    },
     /// An uncorrelated error has no ID and does not complete any pending request.
     Failure {
         id: Option<i64>,
@@ -305,6 +318,7 @@ pub struct Client<'a> {
     next_id: u64,
     tools_supported: Option<bool>,
     negotiated_version: Option<&'static str>,
+    client_capabilities: Option<Value<'a>>,
 }
 impl<'a> Client<'a> {
     /// Modern mode is immediately ready; legacy requires initialize/initialized.
@@ -323,6 +337,7 @@ impl<'a> Client<'a> {
             slots,
             next_id: 1,
             tools_supported: None,
+            client_capabilities: None,
             negotiated_version: if era == Era::Modern {
                 Some(PROTOCOL_VERSION)
             } else {
@@ -330,6 +345,20 @@ impl<'a> Client<'a> {
             },
         }
     }
+    /// Advertise only callbacks/extensions the application actually implements.
+    /// Retain the capability input and token tape for the lifetime of this client.
+    pub fn with_client_capabilities(mut self, capabilities: Value<'a>) -> Result<Self, Error> {
+        extensions::validate_client_capabilities(capabilities)?;
+        if self.pending_count() != 0
+            || (self.era == Era::Legacy && self.state != ClientState::New)
+            || self.state == ClientState::Closed
+        {
+            return Err(state());
+        }
+        self.client_capabilities = Some(capabilities);
+        Ok(self)
+    }
+
     pub fn state(&self) -> ClientState {
         self.state
     }
@@ -353,6 +382,18 @@ impl<'a> Client<'a> {
     }
 
     pub fn initialize(&mut self, output: &mut [u8]) -> Result<Outgoing, Error> {
+        self.initialize_with_version(LEGACY_PROTOCOL_VERSION, output)
+    }
+
+    /// Explicit legacy revision selection for old SSE peers; no automatic downgrade.
+    pub fn initialize_with_version(
+        &mut self,
+        version: &str,
+        output: &mut [u8],
+    ) -> Result<Outgoing, Error> {
+        if !LEGACY_COMPATIBLE_VERSIONS.contains(&version) {
+            return Err(Error::new(ErrorKind::UnsupportedVersion, 0));
+        }
         if self.era != Era::Legacy || self.state != ClientState::New {
             return Err(state());
         }
@@ -360,8 +401,10 @@ impl<'a> Client<'a> {
         let mut w = Writer::new(output);
         self.prefix(&mut w, id, "initialize");
         w.raw(b"\"protocolVersion\":");
-        w.text(LEGACY_PROTOCOL_VERSION);
-        w.raw(b",\"capabilities\":{},\"clientInfo\":");
+        w.text(version);
+        w.raw(b",\"capabilities\":");
+        self.write_client_capabilities(&mut w);
+        w.raw(b",\"clientInfo\":");
         self.info(&mut w);
         w.raw(b"}}");
         let len = w.finish()?;
@@ -463,8 +506,88 @@ impl<'a> Client<'a> {
         Ok(Outgoing { id, len })
     }
 
-    /// Encode cancellation for stdio. For HTTP, close the applicable response
-    /// stream instead. Cancellation does not prove remote work was undone.
+    /// Encode an opted-in method with caller-provided parameters. Modern reserved
+    /// metadata is added automatically; custom metadata and opaque requestState
+    /// are retained. MRTR retries are explicit new requests with new IDs.
+    pub fn request(
+        &mut self,
+        method: Method,
+        params: Option<Value<'_>>,
+        output: &mut [u8],
+    ) -> Result<Outgoing, Error> {
+        self.ready()?;
+        if method.is_callback() || !method.available_at(self.era, self.protocol_version()) {
+            return Err(state());
+        }
+        if method == Method::ToolsCall {
+            self.require_tools()?;
+        }
+        method.validate_params(params)?;
+        let meta = params.and_then(|value| value.get("_meta"));
+        if let Some(meta) = meta {
+            object(meta)?;
+            for reserved in [
+                crate::mcp::VERSION_KEY,
+                crate::mcp::CLIENT_CAPABILITIES_KEY,
+                "io.modelcontextprotocol/clientInfo",
+            ] {
+                if meta.get(reserved).is_some() {
+                    return Err(invalid(meta));
+                }
+            }
+            if let Some(progress) = meta.get("progressToken") {
+                crate::mcp::validate_progress_token(progress)?;
+            }
+        }
+        let (id, slot) = self.prepare()?;
+        let mut w = Writer::new(output);
+        self.prefix(&mut w, id, method.as_str());
+        let mut comma = false;
+        if self.era == Era::Modern {
+            w.raw(b"\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":");
+            w.text(PROTOCOL_VERSION);
+            w.raw(b",\"io.modelcontextprotocol/clientCapabilities\":");
+            self.write_client_capabilities(&mut w);
+            w.raw(b",\"io.modelcontextprotocol/clientInfo\":");
+            self.info(&mut w);
+            if let Some(meta) = meta {
+                for (key, value) in meta.members() {
+                    w.raw(b",");
+                    extensions::write_key(&mut w, key);
+                    w.raw(value.raw().as_bytes());
+                }
+            }
+            w.raw(b"}");
+            comma = true;
+        }
+        if let Some(params) = params {
+            for (key, value) in params.members() {
+                if self.era == Era::Modern && key.matches("_meta") {
+                    continue;
+                }
+                if comma {
+                    w.raw(b",");
+                }
+                extensions::write_key(&mut w, key);
+                w.raw(value.raw().as_bytes());
+                comma = true;
+            }
+        }
+        w.raw(b"}}");
+        let len = w.finish()?;
+        let progress = meta.and_then(|value| value.get("progressToken"))
+            .is_some_and(|value| value.integer().ok() == Some(id));
+        let operation = if method == Method::ToolsCall {
+            Operation::CallTool
+        } else {
+            Operation::Extension(method)
+        };
+        self.commit(slot, id, operation, progress);
+        Ok(Outgoing { id, len })
+    }
+
+    /// Encode cancellation for stdio or legacy HTTP. Modern HTTP cancels by
+    /// closing the applicable response stream. Neither proves effects were undone.
     pub fn cancel(&self, id: i64, reason: Option<&str>, output: &mut [u8]) -> Result<usize, Error> {
         let slot = self.find(id)?;
         if self.slots[slot].operation == Some(Operation::Initialize) {
@@ -523,6 +646,14 @@ impl<'a> Client<'a> {
                 if self.era == Era::Modern {
                     validate_meta(result)?;
                     if !complete_result(result)? {
+                        let supports_input = match self.slots[slot].operation {
+                            Some(Operation::CallTool) => true,
+                            Some(Operation::Extension(method)) => method.supports_input(),
+                            _ => false,
+                        };
+                        if !supports_input {
+                            return Err(Error::new(ErrorKind::UnsupportedResult, result.offset()));
+                        }
                         validate_input_required(result)?;
                         self.slots[slot] = Pending::EMPTY;
                         return Ok(Event::InputRequired { id, result });
@@ -578,6 +709,19 @@ impl<'a> Client<'a> {
                         result: CallResult::parse(result, self.era)?,
                     },
                     Some(Operation::Ping) => Event::Pong { id },
+                    Some(Operation::Extension(method)) => {
+                        method.validate_result(result)?;
+                        if method == Method::SubscriptionsListen {
+                            let meta = object(result.require("_meta")?)?;
+                            let subscription_id = Id::from_value(
+                                meta.require("io.modelcontextprotocol/subscriptionId")?,
+                            )?;
+                            if !subscription_id.equals(Id::Number(id)) {
+                                return Err(Error::new(ErrorKind::UnexpectedResponse, result.offset()));
+                            }
+                        }
+                        Event::ExtensionResult { id, method, result }
+                    }
                     None => return Err(Error::new(ErrorKind::UnknownId, 0)),
                 };
                 self.slots[slot] = Pending::EMPTY;
@@ -672,7 +816,9 @@ impl<'a> Client<'a> {
         if self.era == Era::Modern {
             w.raw(b"\"io.modelcontextprotocol/protocolVersion\":");
             w.text(PROTOCOL_VERSION);
-            w.raw(b",\"io.modelcontextprotocol/clientCapabilities\":{},\"io.modelcontextprotocol/clientInfo\":");
+            w.raw(b",\"io.modelcontextprotocol/clientCapabilities\":");
+            self.write_client_capabilities(w);
+            w.raw(b",\"io.modelcontextprotocol/clientInfo\":");
             self.info(w);
             if progress.is_some() {
                 w.raw(b",");
@@ -683,6 +829,9 @@ impl<'a> Client<'a> {
             w.integer(id);
         }
         w.raw(b"}");
+    }
+    fn write_client_capabilities(&self, w: &mut Writer<'_>) {
+        w.raw(self.client_capabilities.map_or(b"{}", |value| value.raw().as_bytes()));
     }
     fn notice(&mut self, n: Notification<'_>) -> Result<(), Error> {
         if !n.method.matches("notifications/progress") {

@@ -140,7 +140,7 @@ fn legacy_handshake_and_output_failures_are_transactional() {
 
 #[test]
 fn unsupported_legacy_version_never_becomes_ready() {
-    for unsupported in ["1900-01-01", "2024-11-05", "2025-03-26", PROTOCOL_VERSION] {
+    for unsupported in ["1900-01-01", "2025-01-01", PROTOCOL_VERSION] {
         let mut slots = [Pending::EMPTY; 1];
         let mut client = Client::new("test", "1", Era::Legacy, &mut slots);
         let mut output = [0; 1024];

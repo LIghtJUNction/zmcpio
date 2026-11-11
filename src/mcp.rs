@@ -2,6 +2,7 @@
 //! Handling a tool call returns a borrowed action; it never executes a tool.
 use crate::{
     Error, ErrorKind,
+    extensions::{self, Method},
     json::{Document, JsonString, Kind, Limits, Token, Value},
     rpc::{self, Id, Message, Notification, Request},
     writer::Writer,
@@ -78,6 +79,11 @@ pub enum Action<'a> {
         cursor: Option<JsonString<'a>>,
     },
     CallTool(ToolCall<'a>),
+    /// Explicitly opted-in method. The application validates policy and performs work.
+    Extension {
+        context: Context<'a>,
+        method: Method,
+    },
     Notification(Notice<'a>),
     /// Incoming replies are returned to the caller, never answered with another reply.
     IncomingResponse(Message<'a>),
@@ -87,7 +93,9 @@ pub struct Server<'a> {
     name: &'a str,
     version: &'a str,
     capabilities: Capabilities,
+    extensions: &'a [Method],
     legacy: LegacyState,
+    legacy_version: &'static str,
 }
 impl<'a> Server<'a> {
     pub const fn new(name: &'a str, version: &'a str) -> Self {
@@ -98,15 +106,27 @@ impl<'a> Server<'a> {
                 tools: true,
                 tools_list_changed: false,
             },
+            extensions: &[],
             legacy: LegacyState::New,
+            legacy_version: LEGACY_PROTOCOL_VERSION,
         }
     }
     pub fn with_capabilities(mut self, capabilities: Capabilities) -> Self {
         self.capabilities = capabilities;
         self
     }
+    /// Enable only methods whose actions the application actually handles.
+    /// Server-to-client callbacks cannot be enabled as incoming server methods.
+    pub fn with_extensions(mut self, methods: &'a [Method]) -> Self {
+        self.extensions = methods;
+        self
+    }
     pub fn legacy_state(&self) -> LegacyState {
         self.legacy
+    }
+    /// Negotiated legacy revision, available after a successful initialize response.
+    pub fn legacy_protocol_version(&self) -> Option<&'static str> {
+        (self.legacy != LegacyState::New).then_some(self.legacy_version)
     }
     pub const fn memory_bytes(&self) -> usize {
         core::mem::size_of::<Self>()
@@ -206,12 +226,14 @@ impl<'a> Server<'a> {
         if request.method.matches("server/discover") && era == Era::Modern {
             let mut w = Writer::new(output);
             self.begin_result(&mut w, request.id, era);
-            w.raw(b"\"supportedVersions\":[\"");
-            w.raw(PROTOCOL_VERSION.as_bytes());
-            w.raw(b"\",\"");
-            w.raw(LEGACY_PROTOCOL_VERSION.as_bytes());
-            w.raw(b"\"],\"capabilities\":");
-            self.write_capabilities(&mut w, era);
+            w.raw(b"\"supportedVersions\":[");
+            w.text(PROTOCOL_VERSION);
+            for version in crate::client::LEGACY_COMPATIBLE_VERSIONS {
+                w.raw(b",");
+                w.text(version);
+            }
+            w.raw(b"],\"capabilities\":");
+            self.write_capabilities(&mut w, era, self.legacy_version);
             w.raw(b",\"ttlMs\":0,\"cacheScope\":\"private\"}}");
             return w.finish().map(Action::Reply);
         }
@@ -242,6 +264,15 @@ impl<'a> Server<'a> {
                 progress_token,
             }));
         }
+        if let Some(method) = Method::parse(request.method)
+            && method != Method::ToolsCall
+            && !method.is_callback()
+            && method.available_at(era, self.legacy_protocol_version())
+            && self.extensions.contains(&method)
+        {
+            method.validate_params(request.params)?;
+            return Ok(Action::Extension { context, method });
+        }
         rpc::failure(Some(request.id), -32601, "Method not found", None, output).map(Action::Reply)
     }
     fn initialize<'i>(
@@ -260,22 +291,26 @@ impl<'a> Server<'a> {
             .map(Action::Reply);
         }
         let p = object_optional(request.params)?.ok_or(Error::new(ErrorKind::InvalidParams, 0))?;
-        p.require("protocolVersion")?
+        let requested = p.require("protocolVersion")?
             .string()
             .ok_or(Error::new(ErrorKind::InvalidParams, p.offset()))?;
+        let negotiated = crate::client::LEGACY_COMPATIBLE_VERSIONS.iter().copied()
+            .find(|version| requested.matches(version))
+            .unwrap_or(LEGACY_PROTOCOL_VERSION);
         validate_capabilities(p.require("capabilities")?)?;
         validate_info(p.require("clientInfo")?)?;
         let mut w = Writer::new(output);
         self.begin_result(&mut w, request.id, Era::Legacy);
         w.raw(b"\"protocolVersion\":\"");
-        w.raw(LEGACY_PROTOCOL_VERSION.as_bytes());
+        w.raw(negotiated.as_bytes());
         w.raw(b"\",\"capabilities\":");
-        self.write_capabilities(&mut w, Era::Legacy);
+        self.write_capabilities(&mut w, Era::Legacy, negotiated);
         w.raw(b",\"serverInfo\":");
         self.write_info(&mut w);
         w.raw(b"}}");
         let n = w.finish()?;
         self.legacy = LegacyState::AwaitInitialized;
+        self.legacy_version = negotiated;
         Ok(Action::Reply(n))
     }
     fn notice<'i>(&mut self, notification: Notification<'i>) -> Result<Notice<'i>, Error> {
@@ -309,6 +344,85 @@ impl<'a> Server<'a> {
         }
         Ok(Notice::Other(notification))
     }
+    /// Encode a complete result for an opted-in method. The core checks required
+    /// wire fields; the application owns semantic/schema validation and side effects.
+    pub fn extension_result(
+        &self,
+        context: Context<'_>,
+        result: Value<'_>,
+        output: &mut [u8],
+    ) -> Result<usize, Error> {
+        let method = Method::parse(context.request.method)
+            .filter(|method| !method.is_callback() && method.available(context.era))
+            .ok_or(Error::new(ErrorKind::State, 0))?;
+        method.validate_result(result)?;
+        if let Some(kind) = result.get("resultType")
+            && !kind.string().is_some_and(|value| value.matches("complete"))
+        {
+            return Err(Error::new(ErrorKind::UnsupportedResult, kind.offset()));
+        }
+        let mut w = Writer::new(output);
+        rpc::prefix(&mut w, Some(context.request.id));
+        w.raw(b",\"result\":{");
+        let mut comma = false;
+        if context.era == Era::Modern {
+            w.raw(b"\"resultType\":\"complete\"");
+            if result.get("_meta").is_none() {
+                w.raw(b",");
+                self.write_meta(&mut w);
+            }
+            comma = true;
+        }
+        for (key, value) in result.members() {
+            if context.era == Era::Modern && key.matches("resultType") {
+                continue;
+            }
+            if comma {
+                w.raw(b",");
+            }
+            extensions::write_key(&mut w, key);
+            w.raw(value.raw().as_bytes());
+            comma = true;
+        }
+        w.raw(b"}}");
+        w.finish()
+    }
+
+    /// Encode modern MRTR. Input actions are not executed, and opaque requestState
+    /// integrity/authorization remains with the host. Only call/read/get support it.
+    pub fn input_required(
+        &self,
+        context: Context<'_>,
+        input_requests: Option<Value<'_>>,
+        request_state: Option<&str>,
+        output: &mut [u8],
+    ) -> Result<usize, Error> {
+        if context.era != Era::Modern
+            || !Method::parse(context.request.method).is_some_and(Method::supports_input)
+            || (input_requests.is_none() && request_state.is_none())
+        {
+            return Err(Error::new(ErrorKind::State, 0));
+        }
+        if let Some(requests) = input_requests {
+            let caps = context.client_capabilities.ok_or(Error::new(ErrorKind::State, 0))?;
+            extensions::validate_input_requests(requests, caps)?;
+        }
+        let mut w = Writer::new(output);
+        rpc::prefix(&mut w, Some(context.request.id));
+        w.raw(b",\"result\":{\"resultType\":\"input_required\",");
+        self.write_meta(&mut w);
+        if let Some(requests) = input_requests {
+            w.raw(b",\"inputRequests\":");
+            w.raw(requests.raw().as_bytes());
+        }
+        if let Some(state) = request_state {
+            w.raw(b",\"requestState\":");
+            w.text(state);
+        }
+        w.raw(b"}}");
+        w.finish()
+    }
+
     pub fn error(
         &self,
         context: Context<'_>,
@@ -350,7 +464,7 @@ impl<'a> Server<'a> {
         self.write_info(w);
         w.raw(b"}");
     }
-    fn write_capabilities(&self, w: &mut Writer<'_>, era: Era) {
+    fn write_capabilities(&self, w: &mut Writer<'_>, era: Era, legacy_version: &str) {
         w.raw(b"{");
         if self.capabilities.tools {
             w.raw(b"\"tools\":{");
@@ -363,6 +477,53 @@ impl<'a> Server<'a> {
                 });
             }
             w.raw(b"}");
+        }
+        let mut comma = self.capabilities.tools;
+        let resource = self.extensions.iter().any(|method| matches!(
+            method, Method::ResourcesList | Method::ResourcesTemplatesList | Method::ResourcesRead
+            | Method::ResourcesSubscribe | Method::ResourcesUnsubscribe
+        ));
+        let prompt = self.extensions.iter().any(|method| matches!(
+            method, Method::PromptsList | Method::PromptsGet
+        ));
+        for (name, enabled) in [
+            ("resources", resource),
+            ("prompts", prompt),
+            ("completions", self.extensions.contains(&Method::CompletionComplete)),
+            ("logging", self.extensions.contains(&Method::LoggingSetLevel)),
+        ] {
+            if enabled {
+                if comma { w.raw(b","); }
+                w.text(name);
+                w.raw(b":{");
+                if name == "resources" && era == Era::Legacy
+                    && self.extensions.contains(&Method::ResourcesSubscribe)
+                    && self.extensions.contains(&Method::ResourcesUnsubscribe)
+                {
+                    w.raw(b"\"subscribe\":true");
+                }
+                w.raw(b"}");
+                comma = true;
+            }
+        }
+        let tasks = self.extensions.iter().any(|method| matches!(
+            method, Method::TasksGet | Method::TasksResult | Method::TasksList | Method::TasksCancel
+        ));
+        if tasks && (era == Era::Modern || legacy_version == LEGACY_PROTOCOL_VERSION) {
+            if comma { w.raw(b","); }
+            if era == Era::Modern {
+                w.raw(b"\"extensions\":{\"io.modelcontextprotocol/tasks\":{");
+            } else {
+                w.raw(b"\"tasks\":{");
+            }
+            let list = self.extensions.contains(&Method::TasksList);
+            if list { w.raw(b"\"list\":{}"); }
+            if self.extensions.contains(&Method::TasksCancel) {
+                if list { w.raw(b","); }
+                w.raw(b"\"cancel\":{}");
+            }
+            w.raw(b"}");
+            if era == Era::Modern { w.raw(b"}"); }
         }
         w.raw(b"}");
     }

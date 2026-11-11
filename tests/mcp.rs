@@ -43,7 +43,7 @@ fn legacy_initialization_is_transactional() {
             .unwrap()
             .string()
             .unwrap()
-            .matches("2025-11-25")
+            .matches("2024-11-05")
     );
     let Action::Notification(Notice::Initialized) = server
         .handle(
