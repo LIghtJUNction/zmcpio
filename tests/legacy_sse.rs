@@ -2,7 +2,12 @@ use zmcpio::legacy_sse::{self, Action, Error, Scheme, Session};
 use zmcpio::sse::Event;
 
 fn event<'a>(kind: &'a str, data: Option<&'a [u8]>) -> Event<'a> {
-    Event { data, event: kind, id: None, retry_ms: None }
+    Event {
+        data,
+        event: kind,
+        id: None,
+        retry_ms: None,
+    }
 }
 
 #[test]
@@ -18,10 +23,16 @@ fn relative_absolute_and_query_endpoint_references() {
         ("https://example.com:0443/messages", "/messages"),
         ("https://example.com?sid=2", "/?sid=2"),
         ("/%E4%BD%A0?x=%20", "/%E4%BD%A0?x=%20"),
-        ("messages?next=https://elsewhere.test/", "/a/messages?next=https://elsewhere.test/"),
+        (
+            "messages?next=https://elsewhere.test/",
+            "/a/messages?next=https://elsewhere.test/",
+        ),
     ] {
         let mut target = [0; 256];
-        assert_eq!(legacy_sse::resolve_endpoint(base, reference, &mut target).unwrap(), expected);
+        assert_eq!(
+            legacy_sse::resolve_endpoint(base, reference, &mut target).unwrap(),
+            expected
+        );
     }
 }
 
@@ -41,7 +52,8 @@ fn literal_dot_segments_use_rfc_resolution_and_preserve_query() {
     ] {
         let mut target = [0; 128];
         assert_eq!(
-            legacy_sse::resolve_endpoint("https://example.com/a/sse", reference, &mut target).unwrap(),
+            legacy_sse::resolve_endpoint("https://example.com/a/sse", reference, &mut target)
+                .unwrap(),
             expected,
             "{reference}"
         );
@@ -52,11 +64,20 @@ fn literal_dot_segments_use_rfc_resolution_and_preserve_query() {
 fn ip_origins_compare_address_and_effective_port() {
     for (base, reference) in [
         ("http://127.0.0.1/sse", "http://127.0.0.1:80/post"),
-        ("https://[2001:db8::1]/sse", "https://[2001:0db8:0:0:0:0:0:1]:443/post"),
-        ("http://[::1]:8080/sse", "http://[0:0:0:0:0:0:0:1]:8080/post"),
+        (
+            "https://[2001:db8::1]/sse",
+            "https://[2001:0db8:0:0:0:0:0:1]:443/post",
+        ),
+        (
+            "http://[::1]:8080/sse",
+            "http://[0:0:0:0:0:0:0:1]:8080/post",
+        ),
     ] {
         let mut target = [0; 128];
-        assert_eq!(legacy_sse::resolve_endpoint(base, reference, &mut target).unwrap(), "/post");
+        assert_eq!(
+            legacy_sse::resolve_endpoint(base, reference, &mut target).unwrap(),
+            "/post"
+        );
     }
 }
 
@@ -90,7 +111,11 @@ fn cross_origin_and_ambiguous_references_never_mutate_output() {
         "",
     ] {
         let mut output = [0xa5; 256];
-        assert!(legacy_sse::resolve_endpoint("https://example.com/sse", reference, &mut output).is_err(), "{reference}");
+        assert!(
+            legacy_sse::resolve_endpoint("https://example.com/sse", reference, &mut output)
+                .is_err(),
+            "{reference}"
+        );
         assert_eq!(output, [0xa5; 256]);
     }
 }
@@ -124,19 +149,40 @@ fn endpoint_must_precede_messages_and_cannot_be_rebound() {
     assert_eq!(session.scheme(), Scheme::Https);
     assert_eq!(session.authority(), "example.com");
     assert_eq!(session.endpoint_target(), None);
-    assert_eq!(session.on_event(event("message", Some(b"{}"))), Err(Error::MissingEndpoint));
+    assert_eq!(
+        session.on_event(event("message", Some(b"{}"))),
+        Err(Error::MissingEndpoint)
+    );
     assert_eq!(session.on_event(event("message", None)), Ok(Action::Ignore));
-    assert_eq!(session.on_event(event("unknown", Some(b"ignored"))), Ok(Action::Ignore));
-    assert_eq!(session.on_event(event("endpoint", Some(b"post?sid=1"))), Ok(Action::EndpointReady));
+    assert_eq!(
+        session.on_event(event("unknown", Some(b"ignored"))),
+        Ok(Action::Ignore)
+    );
+    assert_eq!(
+        session.on_event(event("endpoint", Some(b"post?sid=1"))),
+        Ok(Action::EndpointReady)
+    );
     assert_eq!(session.endpoint_target(), Some("/a/post?sid=1"));
     let message = br#"{"jsonrpc":"2.0","id":1,"result":{}}"#;
-    assert_eq!(session.on_event(event("message", Some(message))), Ok(Action::Message(message)));
-    assert_eq!(session.on_event(event("endpoint", Some(b"/other"))), Err(Error::DuplicateEndpoint));
+    assert_eq!(
+        session.on_event(event("message", Some(message))),
+        Ok(Action::Message(message))
+    );
+    assert_eq!(
+        session.on_event(event("endpoint", Some(b"/other"))),
+        Err(Error::DuplicateEndpoint)
+    );
     assert_eq!(session.endpoint_target(), Some("/a/post?sid=1"));
     session.reset();
     assert_eq!(session.endpoint_target(), None);
-    assert_eq!(session.on_event(event("message", Some(b"{}"))), Err(Error::MissingEndpoint));
-    assert_eq!(session.on_event(event("endpoint", Some(b"/new"))), Ok(Action::EndpointReady));
+    assert_eq!(
+        session.on_event(event("message", Some(b"{}"))),
+        Err(Error::MissingEndpoint)
+    );
+    assert_eq!(
+        session.on_event(event("endpoint", Some(b"/new"))),
+        Ok(Action::EndpointReady)
+    );
     assert_eq!(session.endpoint_target(), Some("/new"));
 }
 
@@ -152,7 +198,10 @@ fn endpoint_capacity_can_be_retried_without_accepting_partial_state() {
     );
     assert_eq!(session.endpoint_target(), None);
     session.replace_storage(&mut large).unwrap();
-    assert_eq!(session.on_event(event("endpoint", Some(b"/messages"))), Ok(Action::EndpointReady));
+    assert_eq!(
+        session.on_event(event("endpoint", Some(b"/messages"))),
+        Ok(Action::EndpointReady)
+    );
     assert_eq!(
         session.replace_storage(&mut too_small),
         Err(Error::Capacity { needed: 9 })
@@ -170,8 +219,14 @@ fn failed_capacity_and_endpoint_syntax_do_not_modify_output() {
     assert_eq!(output, [0xa5; 2]);
     let mut target = [0; 32];
     let mut session = Session::new("https://example.com/sse", &mut target).unwrap();
-    assert_eq!(session.on_event(event("endpoint", None)), Err(Error::InvalidUri));
-    assert_eq!(session.on_event(event("endpoint", Some(&[0xff]))), Err(Error::InvalidUri));
+    assert_eq!(
+        session.on_event(event("endpoint", None)),
+        Err(Error::InvalidUri)
+    );
+    assert_eq!(
+        session.on_event(event("endpoint", Some(&[0xff]))),
+        Err(Error::InvalidUri)
+    );
     assert_eq!(session.endpoint_target(), None);
 }
 
@@ -190,7 +245,9 @@ fn real_sse_wire_drives_legacy_endpoint_and_message_state() {
         let step = decoder.feed(core::slice::from_ref(byte));
         if step.status == zmcpio::sse::Status::Ready {
             match session.on_event(decoder.event().unwrap()).unwrap() {
-                Action::EndpointReady => assert_eq!(session.endpoint_target(), Some("/messages?sid=7")),
+                Action::EndpointReady => {
+                    assert_eq!(session.endpoint_target(), Some("/messages?sid=7"))
+                }
                 Action::Message(bytes) => {
                     assert_eq!(bytes, br#"{"jsonrpc":"2.0","id":1,"result":{}}"#);
                     messages += 1;

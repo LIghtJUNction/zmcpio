@@ -34,6 +34,10 @@ harness = false
 name = "client"
 harness = false
 
+[[bench]]
+name = "transport"
+harness = false
+
 [[example]]
 name = "mcp_client"
 required-features = ["std"]

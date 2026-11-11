@@ -416,8 +416,11 @@ fn out_of_order_responses_are_decoded_for_their_request_kind() {
 
 #[test]
 fn input_required_is_not_a_final_tool_result_or_an_automatic_retry() {
+    let mut cap_tokens = [Token::EMPTY; 16];
+    let caps = parse(br#"{"elicitation":{"form":{}}}"#, &mut cap_tokens);
     let mut slots = [Pending::EMPTY; 1];
-    let mut client = Client::new("test", "1", Era::Modern, &mut slots);
+    let mut client = Client::new("test", "1", Era::Modern, &mut slots)
+        .with_client_capabilities(caps).unwrap();
     let mut output = [0; 2048];
     let mut tokens = [Token::EMPTY; 256];
     let call = client.call_tool("confirm", None, &mut output).unwrap();

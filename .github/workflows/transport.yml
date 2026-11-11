@@ -27,6 +27,8 @@ jobs:
         run: cargo +1.99.1 test --locked --no-default-features
       - name: Lint adapters
         run: cargo +1.99.1 clippy --locked --all-targets --all-features -- -D warnings
+      - name: Measure transport primitives (release, smoke samples)
+        run: cargo +1.99.1 bench --locked --bench transport
       - name: Formatting
         if: always()
         run: |

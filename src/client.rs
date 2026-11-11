@@ -46,6 +46,7 @@ pub struct Pending {
     id: i64,
     operation: Option<Operation>,
     progress_requested: bool,
+    task_requested: bool,
     progress: Option<f64>,
 }
 impl Pending {
@@ -53,6 +54,7 @@ impl Pending {
         id: 0,
         operation: None,
         progress_requested: false,
+        task_requested: false,
         progress: None,
     };
 }
@@ -288,6 +290,12 @@ pub enum Event<'a> {
     Pong {
         id: i64,
     },
+    /// A durable task handle, not a completed tool result. Poll/update/cancel
+    /// explicitly; the client never starts a scheduler or repeats the tool call.
+    TaskCreated {
+        id: i64,
+        task: extensions::TaskView<'a>,
+    },
     /// Complete extension result. Application schemas and effects remain caller-owned.
     ExtensionResult {
         id: i64,
@@ -317,6 +325,7 @@ pub struct Client<'a> {
     slots: &'a mut [Pending],
     next_id: u64,
     tools_supported: Option<bool>,
+    legacy_tool_tasks: bool,
     negotiated_version: Option<&'static str>,
     client_capabilities: Option<Value<'a>>,
 }
@@ -337,6 +346,7 @@ impl<'a> Client<'a> {
             slots,
             next_id: 1,
             tools_supported: None,
+            legacy_tool_tasks: false,
             client_capabilities: None,
             negotiated_version: if era == Era::Modern {
                 Some(PROTOCOL_VERSION)
@@ -523,6 +533,22 @@ impl<'a> Client<'a> {
             self.require_tools()?;
         }
         method.validate_params(params)?;
+        if self.era == Era::Modern && method.needs_task_capability(params)
+            && !extensions::has_task_capability(self.client_capabilities)
+        {
+            return Err(state());
+        }
+        let task_requested = params.and_then(|value| value.get("task"));
+        if let Some(task) = task_requested {
+            object(task)?;
+            if self.era != Era::Legacy || method != Method::ToolsCall
+                || self.protocol_version() != Some(LEGACY_PROTOCOL_VERSION)
+                || !self.legacy_tool_tasks
+            {
+                return Err(state());
+            }
+            task.get("ttl").map(nonnegative).transpose()?;
+        }
         let meta = params.and_then(|value| value.get("_meta"));
         if let Some(meta) = meta {
             object(meta)?;
@@ -575,8 +601,7 @@ impl<'a> Client<'a> {
         }
         w.raw(b"}}");
         let len = w.finish()?;
-        let progress = meta
-            .and_then(|value| value.get("progressToken"))
+        let progress = meta.and_then(|value| value.get("progressToken"))
             .is_some_and(|value| value.integer().ok() == Some(id));
         let operation = if method == Method::ToolsCall {
             Operation::CallTool
@@ -584,6 +609,7 @@ impl<'a> Client<'a> {
             Operation::Extension(method)
         };
         self.commit(slot, id, operation, progress);
+        self.slots[slot].task_requested = task_requested.is_some();
         Ok(Outgoing { id, len })
     }
 
@@ -646,6 +672,18 @@ impl<'a> Client<'a> {
                 object(result)?;
                 if self.era == Era::Modern {
                     validate_meta(result)?;
+                    if result.get("resultType").and_then(Value::string)
+                        .is_some_and(|kind| kind.matches("task"))
+                    {
+                        if self.slots[slot].operation != Some(Operation::CallTool)
+                            || !extensions::has_task_capability(self.client_capabilities)
+                        {
+                            return Err(Error::new(ErrorKind::UnsupportedResult, result.offset()));
+                        }
+                        let task = extensions::TaskView::parse(result, self.era)?;
+                        self.slots[slot] = Pending::EMPTY;
+                        return Ok(Event::TaskCreated { id, task });
+                    }
                     if !complete_result(result)? {
                         let supports_input = match self.slots[slot].operation {
                             Some(Operation::CallTool) => true,
@@ -656,6 +694,7 @@ impl<'a> Client<'a> {
                             return Err(Error::new(ErrorKind::UnsupportedResult, result.offset()));
                         }
                         validate_input_required(result)?;
+                        self.validate_result_inputs(result)?;
                         self.slots[slot] = Pending::EMPTY;
                         return Ok(Event::InputRequired { id, result });
                     }
@@ -671,6 +710,9 @@ impl<'a> Client<'a> {
                         let caps = capabilities(result.require("capabilities")?)?;
                         let server = ServerInfo::parse(result.require("serverInfo")?)?;
                         self.tools_supported = Some(caps.get("tools").is_some());
+                        self.legacy_tool_tasks = caps.get("tasks")
+                            .and_then(|v| v.get("requests")).and_then(|v| v.get("tools"))
+                            .and_then(|v| v.get("call")).is_some_and(|v| v.kind() == Kind::Object);
                         self.negotiated_version = Some(negotiated);
                         self.state = ClientState::AwaitInitialized;
                         Event::Initialized {
@@ -705,23 +747,27 @@ impl<'a> Client<'a> {
                         id,
                         page: ToolPage::parse(result, self.era)?,
                     },
-                    Some(Operation::CallTool) => Event::ToolResult {
-                        id,
-                        result: CallResult::parse(result, self.era)?,
-                    },
+                    Some(Operation::CallTool) => {
+                        if self.era == Era::Legacy && self.slots[slot].task_requested {
+                            let task = extensions::TaskView::parse(result.require("task")?, self.era)?;
+                            Event::TaskCreated { id, task }
+                        } else {
+                            Event::ToolResult { id, result: CallResult::parse(result, self.era)? }
+                        }
+                    }
                     Some(Operation::Ping) => Event::Pong { id },
                     Some(Operation::Extension(method)) => {
-                        method.validate_result(result)?;
+                        method.validate_result_for(self.era, result)?;
+                        if self.era == Era::Modern && method == Method::TasksGet {
+                            self.validate_result_inputs(result)?;
+                        }
                         if method == Method::SubscriptionsListen {
                             let meta = object(result.require("_meta")?)?;
                             let subscription_id = Id::from_value(
                                 meta.require("io.modelcontextprotocol/subscriptionId")?,
                             )?;
                             if !subscription_id.equals(Id::Number(id)) {
-                                return Err(Error::new(
-                                    ErrorKind::UnexpectedResponse,
-                                    result.offset(),
-                                ));
+                                return Err(Error::new(ErrorKind::UnexpectedResponse, result.offset()));
                             }
                         }
                         Event::ExtensionResult { id, method, result }
@@ -783,6 +829,7 @@ impl<'a> Client<'a> {
             id,
             operation: Some(operation),
             progress_requested,
+            task_requested: false,
             progress: None,
         };
         self.next_id += 1;
@@ -835,10 +882,17 @@ impl<'a> Client<'a> {
         w.raw(b"}");
     }
     fn write_client_capabilities(&self, w: &mut Writer<'_>) {
-        w.raw(
-            self.client_capabilities
-                .map_or(b"{}", |value| value.raw().as_bytes()),
-        );
+        w.raw(self.client_capabilities.map_or(b"{}", |value| value.raw().as_bytes()));
+    }
+    fn validate_result_inputs(&self, result: Value<'_>) -> Result<(), Error> {
+        if let Some(requests) = result.get("inputRequests") {
+            object(requests)?;
+            if requests.members().next().is_some() {
+                let caps = self.client_capabilities.ok_or_else(state)?;
+                extensions::validate_input_requests(requests, caps)?;
+            }
+        }
+        Ok(())
     }
     fn notice(&mut self, n: Notification<'_>) -> Result<(), Error> {
         if !n.method.matches("notifications/progress") {
@@ -904,6 +958,7 @@ fn capabilities(value: Value<'_>) -> Result<Value<'_>, Error> {
         "completions",
         "experimental",
         "extensions",
+        "tasks",
     ] {
         value.get(name).map(object).transpose()?;
     }

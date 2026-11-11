@@ -90,7 +90,12 @@ impl<'a> Session<'a> {
     pub fn new(sse_url: &'a str, target_storage: &'a mut [u8]) -> Result<Self, Error> {
         let base = parse_url(sse_url)?;
         validate_path(base.path, true)?;
-        Ok(Self { base, target: target_storage, used: 0, ready: false })
+        Ok(Self {
+            base,
+            target: target_storage,
+            used: 0,
+            ready: false,
+        })
     }
 
     pub fn scheme(&self) -> Scheme {
@@ -174,11 +179,7 @@ pub fn resolve_endpoint<'o>(
     resolve(base, reference, output)
 }
 
-fn resolve<'o>(
-    base: Url<'_>,
-    reference: &str,
-    output: &'o mut [u8],
-) -> Result<&'o str, Error> {
+fn resolve<'o>(base: Url<'_>, reference: &str, output: &'o mut [u8]) -> Result<&'o str, Error> {
     validate_uri(reference)?;
     if reference.is_empty() {
         return Err(Error::InvalidUri);
@@ -205,7 +206,10 @@ fn resolve<'o>(
         }
     };
     validate_path(path, false)?;
-    let path_len = prefix.len().checked_add(path.len()).ok_or(Error::InvalidUri)?;
+    let path_len = prefix
+        .len()
+        .checked_add(path.len())
+        .ok_or(Error::InvalidUri)?;
     let needed = path_len.checked_add(query.len()).ok_or(Error::InvalidUri)?;
     if output.len() < needed {
         return Err(Error::Capacity { needed });
@@ -236,10 +240,7 @@ fn parse_url(input: &str) -> Result<Url<'_>, Error> {
     };
     let end = rest.find(['/', '?']).unwrap_or(rest.len());
     let authority = &rest[..end];
-    let (host, port) = parse_authority(
-        authority,
-        if scheme == Scheme::Https { 443 } else { 80 },
-    )?;
+    let (host, port) = parse_authority(authority, if scheme == Scheme::Https { 443 } else { 80 })?;
     let (path, query) = path_query(&rest[end..]);
     Ok(Url {
         scheme,
@@ -257,7 +258,9 @@ fn parse_authority(authority: &str, default_port: u16) -> Result<(Host<'_>, u16)
     }
     if authority.starts_with('[') {
         let end = authority.find(']').ok_or(Error::InvalidUri)?;
-        let address = authority[1..end].parse::<Ipv6Addr>().map_err(|_| Error::InvalidUri)?;
+        let address = authority[1..end]
+            .parse::<Ipv6Addr>()
+            .map_err(|_| Error::InvalidUri)?;
         let suffix = &authority[end + 1..];
         let port = if suffix.is_empty() {
             default_port
@@ -296,7 +299,9 @@ fn dns_name(name: &str) -> bool {
                 && label.len() <= 63
                 && !label.starts_with('-')
                 && !label.ends_with('-')
-                && label.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                && label
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-')
         })
 }
 
@@ -314,12 +319,23 @@ fn validate_uri(value: &str) -> Result<(), Error> {
     let mut at = 0;
     while at < bytes.len() {
         let byte = bytes[at];
-        if !(33..127).contains(&byte) || matches!(byte, b'#' | b'\\' | b'"' | b'<' | b'>' | b'^' | 0x60 | b'{' | b'|' | b'}') {
+        if !(33..127).contains(&byte)
+            || matches!(
+                byte,
+                b'#' | b'\\' | b'"' | b'<' | b'>' | b'^' | 0x60 | b'{' | b'|' | b'}'
+            )
+        {
             return Err(Error::InvalidUri);
         }
         if byte == b'%' {
-            let high = bytes.get(at + 1).and_then(|b| hex(*b)).ok_or(Error::InvalidUri)?;
-            let low = bytes.get(at + 2).and_then(|b| hex(*b)).ok_or(Error::InvalidUri)?;
+            let high = bytes
+                .get(at + 1)
+                .and_then(|b| hex(*b))
+                .ok_or(Error::InvalidUri)?;
+            let low = bytes
+                .get(at + 2)
+                .and_then(|b| hex(*b))
+                .ok_or(Error::InvalidUri)?;
             let decoded = high * 16 + low;
             if decoded < 32 || decoded == 127 || decoded == b'\\' {
                 return Err(Error::InvalidUri);
@@ -347,8 +363,10 @@ fn validate_path(path: &str, canonical: bool) -> Result<(), Error> {
             if bytes[at] == b'.' {
                 dots += 1;
                 at += 1;
-            } else if bytes[at] == b'%' && at + 2 < bytes.len()
-                && hex(bytes[at + 1]) == Some(2) && hex(bytes[at + 2]) == Some(14)
+            } else if bytes[at] == b'%'
+                && at + 2 < bytes.len()
+                && hex(bytes[at + 1]) == Some(2)
+                && hex(bytes[at + 2]) == Some(14)
             {
                 dots += 1;
                 at += 3;
@@ -372,9 +390,7 @@ fn remove_dots(output: &mut [u8], len: usize) -> usize {
         let tail = &output[read..len];
         if tail.starts_with(b"../") {
             read += 3;
-        } else if tail.starts_with(b"./") {
-            read += 2;
-        } else if tail.starts_with(b"/./") {
+        } else if tail.starts_with(b"./") || tail.starts_with(b"/./") {
             read += 2;
         } else if tail == b"/." {
             output[written] = b'/';
@@ -382,9 +398,15 @@ fn remove_dots(output: &mut [u8], len: usize) -> usize {
             read = len;
         } else if tail.starts_with(b"/../") {
             read += 3;
-            written = output[..written].iter().rposition(|b| *b == b'/').unwrap_or(0);
+            written = output[..written]
+                .iter()
+                .rposition(|b| *b == b'/')
+                .unwrap_or(0);
         } else if tail == b"/.." {
-            written = output[..written].iter().rposition(|b| *b == b'/').unwrap_or(0);
+            written = output[..written]
+                .iter()
+                .rposition(|b| *b == b'/')
+                .unwrap_or(0);
             output[written] = b'/';
             written += 1;
             read = len;
@@ -392,7 +414,9 @@ fn remove_dots(output: &mut [u8], len: usize) -> usize {
             read = len;
         } else {
             let initial = usize::from(tail[0] == b'/');
-            let take = tail[initial..].iter().position(|b| *b == b'/')
+            let take = tail[initial..]
+                .iter()
+                .position(|b| *b == b'/')
                 .map_or(tail.len(), |at| initial + at);
             output.copy_within(read..read + take, written);
             written += take;

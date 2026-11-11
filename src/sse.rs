@@ -465,10 +465,7 @@ pub fn write_event(event: Event<'_>, output: &mut [u8]) -> Result<usize, Error> 
         }
     }
     let mut digits = [0; 20];
-    let retry = match event.retry_ms {
-        Some(number) => Some(decimal(number, &mut digits)),
-        None => None,
-    };
+    let retry = event.retry_ms.map(|number| decimal(number, &mut digits));
     let has_name = !event.event.is_empty() && event.event != "message";
     let mut needed = 1_usize;
     if let Some(id) = event.id {

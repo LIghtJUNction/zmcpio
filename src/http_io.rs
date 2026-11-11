@@ -620,7 +620,11 @@ pub fn start_sse_with<'a, W: Write>(
     validate_headers(headers, false, true)?;
     writer.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n")?;
     write_headers(writer, headers)?;
-    write!(writer, "Transfer-Encoding: chunked\r\nConnection: {}\r\n\r\n", connection.header())?;
+    write!(
+        writer,
+        "Transfer-Encoding: chunked\r\nConnection: {}\r\n\r\n",
+        connection.header()
+    )?;
     writer.flush()?;
     Ok(ChunkWriter {
         writer,
