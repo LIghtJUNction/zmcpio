@@ -16,6 +16,8 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable, '1.99.1']
     runs-on: ${{ matrix.os }}
+    env:
+      ZMCP_BENCH_SMOKE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -31,15 +33,14 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo check --locked --no-default-features
       - run: cargo run --locked --example basic
+      - run: cargo run --locked --example custom_transport
       - run: python scripts/stdio_smoke.py
+      - run: python scripts/test_release.py
+      - run: python scripts/audit.py
+      - run: cargo bench --locked --bench core
       - name: WASM
         if: matrix.os == 'ubuntu-latest'
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check --locked --no-default-features --target wasm32-unknown-unknown
-      - name: Audit complete dependency closure
-        shell: bash
-        run: |
-          cargo metadata --locked --format-version 1 > metadata.json
-          python -c "import json; m=json.load(open('metadata.json')); assert len(m['packages']) == 1; assert not m['packages'][0]['dependencies']"
       - run: cargo package --locked

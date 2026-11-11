@@ -25,6 +25,10 @@ std = []
 members = ["."]
 exclude = ["comparison"]
 
+[[bench]]
+name = "core"
+harness = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

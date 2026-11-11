@@ -14,6 +14,8 @@ jobs:
   format:
     if: github.repository == 'LIghtJUNction/zmcp' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    env:
+      ZMCP_BENCH_SMOKE: '1'
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
@@ -25,6 +27,8 @@ jobs:
           cargo +1.99.1 fmt --all -- --check
           cargo +1.99.1 test --locked --all-targets
           cargo +1.99.1 clippy --locked --all-targets -- -D warnings
+          python scripts/test_release.py
+          python scripts/audit.py
       - name: Commit formatting without overwriting concurrent changes
         run: |
           if ! git diff --quiet; then
@@ -38,12 +42,3 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run ci.yml --ref main
-      - name: Verify public crate registration ownership
-        run: |
-          python - <<'PY'
-          import json, urllib.request
-          req = urllib.request.Request('https://crates.io/api/v1/crates/zmcp/owners', headers={'User-Agent':'zmcp-repository-verification/0.1'})
-          with urllib.request.urlopen(req, timeout=30) as response:
-              data = json.load(response)
-          print('Existing zmcp owners:', [u.get('login') for u in data.get('users', [])])
-          PY

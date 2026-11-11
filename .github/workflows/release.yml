@@ -1,0 +1,131 @@
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: Version increment (ignored when version is set)
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      version:
+        description: Optional explicit SemVer version
+        type: string
+        default: ''
+      publish:
+        description: Publish after validation (false performs validation only)
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: github.repository == 'LIghtJUNction/zmcp' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python scripts/test_release.py
+      - id: plan
+        env:
+          BUMP: ${{ inputs.bump }}
+          MANUAL_VERSION: ${{ inputs.version }}
+          PUBLISH: ${{ inputs.publish }}
+        run: python scripts/release.py plan
+  validate:
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        rust: [stable, '1.99.1']
+    runs-on: ${{ matrix.os }}
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      ZMCP_BENCH_SMOKE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: |
+          rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt,clippy
+          rustup default ${{ matrix.rust }}
+      - run: python scripts/release.py apply
+      - name: Commit candidate locally for reproducible package verification
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock
+          if ! git diff --cached --quiet; then git commit -m "ci: validate $VERSION"; fi
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --all-targets --locked
+      - run: cargo test --all-targets --release --locked
+      - run: cargo test --doc --locked
+      - run: cargo check --no-default-features --locked
+      - run: python scripts/audit.py
+      - run: python scripts/stdio_smoke.py
+      - name: WASM
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --no-default-features --locked --target wasm32-unknown-unknown
+      - run: cargo package --locked
+      - run: cargo publish --dry-run --locked
+  publish:
+    if: inputs.publish
+    needs: [plan, validate]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.plan.outputs.version }}
+      DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      ZMCP_BENCH_SMOKE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          fetch-depth: 0
+      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+      - run: rustup default stable
+      - run: python scripts/release.py apply
+      - run: python scripts/release.py preflight
+      - name: Commit exact candidate
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock
+          if ! git diff --cached --quiet; then git commit -m "release: v$VERSION"; fi
+          test -z "$(git tag --list "v$VERSION")"
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --all-targets --release --locked
+      - run: cargo test --doc --locked
+      - run: python scripts/audit.py
+      - run: cargo package --locked
+      - run: cargo publish --dry-run --locked
+      - name: Push verified version without overwriting concurrent commits
+        run: |
+          git fetch origin "$DEFAULT_BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$GITHUB_SHA"
+          git push origin "HEAD:refs/heads/$DEFAULT_BRANCH"
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          test -n "$CARGO_REGISTRY_TOKEN"
+          cargo publish --locked
+      - name: Tag only after publication succeeds
+        run: |
+          git tag -a "v$VERSION" -m "Release v$VERSION"
+          git push origin "refs/tags/v$VERSION"
+      - name: Create release in this workflow, without tag-trigger chaining
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "v$VERSION" --verify-tag --generate-notes --title "v$VERSION"
