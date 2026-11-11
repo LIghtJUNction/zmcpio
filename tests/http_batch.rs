@@ -10,9 +10,18 @@ use zmcpio::{
 };
 
 const HEADERS: [Header<'static>; 3] = [
-    Header { name: "Content-Type", value: "application/json" },
-    Header { name: "Accept", value: "application/json, text/event-stream" },
-    Header { name: "Authorization", value: "test-token" },
+    Header {
+        name: "Content-Type",
+        value: "application/json",
+    },
+    Header {
+        name: "Accept",
+        value: "application/json, text/event-stream",
+    },
+    Header {
+        name: "Authorization",
+        value: "test-token",
+    },
 ];
 const REQUESTS: &str =
     r#"[{"jsonrpc":"2.0","id":1,"method":"ping"},{"jsonrpc":"2.0","id":2,"method":"tools/list"}]"#;
@@ -55,10 +64,23 @@ fn config() -> ServerConfig {
 
 #[test]
 fn request_batch_accepts_json_or_sse_not_empty_202() {
-    let kind = validate(REQUESTS, config(), Method::Post, &HEADERS, &Policy::default()).unwrap();
+    let kind = validate(
+        REQUESTS,
+        config(),
+        Method::Post,
+        &HEADERS,
+        &Policy::default(),
+    )
+    .unwrap();
     assert_eq!(kind, BodyKind::Request);
-    assert_eq!(http::response_mode(200, Some(http::JSON), kind), Ok(ResponseMode::Json));
-    assert_eq!(http::response_mode(200, Some(http::SSE), kind), Ok(ResponseMode::Sse));
+    assert_eq!(
+        http::response_mode(200, Some(http::JSON), kind),
+        Ok(ResponseMode::Json)
+    );
+    assert_eq!(
+        http::response_mode(200, Some(http::SSE), kind),
+        Ok(ResponseMode::Sse)
+    );
     assert!(http::response_mode(202, None, kind).is_err());
 }
 
@@ -67,7 +89,10 @@ fn notifications_only_require_202_and_no_body() {
     let input = r#"[{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","method":"notifications/roots/list_changed"}]"#;
     let kind = validate(input, config(), Method::Post, &HEADERS, &Policy::default()).unwrap();
     assert_eq!(kind, BodyKind::Notification);
-    assert_eq!(http::response_mode(202, None, kind), Ok(ResponseMode::Empty));
+    assert_eq!(
+        http::response_mode(202, None, kind),
+        Ok(ResponseMode::Empty)
+    );
     assert!(http::response_mode(200, Some(http::JSON), kind).is_err());
 }
 
@@ -76,7 +101,10 @@ fn response_only_batch_requires_202_and_never_a_response_to_response() {
     let input = r#"[{"jsonrpc":"2.0","id":1,"result":{}},{"jsonrpc":"2.0","id":2,"error":{"code":-32601,"message":"unknown"}}]"#;
     let kind = validate(input, config(), Method::Post, &HEADERS, &Policy::default()).unwrap();
     assert_eq!(kind, BodyKind::Response);
-    assert_eq!(http::response_mode(202, None, kind), Ok(ResponseMode::Empty));
+    assert_eq!(
+        http::response_mode(202, None, kind),
+        Ok(ResponseMode::Empty)
+    );
     assert!(http::response_mode(200, Some(http::SSE), kind).is_err());
 }
 
@@ -118,7 +146,13 @@ fn invalid_request_entries_remain_individual_error_responses() {
 #[test]
 fn only_invalid_entries_must_not_be_acknowledged_as_notifications() {
     assert_eq!(
-        validate("[1,true,null]", config(), Method::Post, &HEADERS, &Policy::default()),
+        validate(
+            "[1,true,null]",
+            config(),
+            Method::Post,
+            &HEADERS,
+            &Policy::default()
+        ),
         Ok(BodyKind::Request)
     );
 }
@@ -134,11 +168,24 @@ fn malformed_entries_in_a_response_batch_are_local_errors() {
 
 #[test]
 fn newer_transport_revisions_reject_batches_even_when_other_headers_are_valid() {
-    for version in [Version::V2025_06_18, Version::V2025_11_25, Version::V2026_07_28] {
+    for version in [
+        Version::V2025_06_18,
+        Version::V2025_11_25,
+        Version::V2026_07_28,
+    ] {
         let mut headers = HEADERS.to_vec();
-        headers.push(Header { name: "MCP-Protocol-Version", value: version.as_str() });
+        headers.push(Header {
+            name: "MCP-Protocol-Version",
+            value: version.as_str(),
+        });
         assert_eq!(
-            validate(REQUESTS, ServerConfig::stateless(version), Method::Post, &headers, &Policy::default()),
+            validate(
+                REQUESTS,
+                ServerConfig::stateless(version),
+                Method::Post,
+                &headers,
+                &Policy::default()
+            ),
             Err(HttpError::BadRequest)
         );
     }
@@ -160,20 +207,44 @@ fn batching_is_not_a_get_or_delete_body_feature() {
 #[test]
 fn optional_version_header_must_match_the_explicit_legacy_binding() {
     let mut headers = HEADERS.to_vec();
-    headers.push(Header { name: "MCP-Protocol-Version", value: "2025-03-26" });
+    headers.push(Header {
+        name: "MCP-Protocol-Version",
+        value: "2025-03-26",
+    });
     assert_eq!(
-        validate(REQUESTS, config(), Method::Post, &headers, &Policy::default()),
+        validate(
+            REQUESTS,
+            config(),
+            Method::Post,
+            &headers,
+            &Policy::default()
+        ),
         Ok(BodyKind::Request)
     );
     headers.last_mut().unwrap().value = "2025-06-18";
     assert_eq!(
-        validate(REQUESTS, config(), Method::Post, &headers, &Policy::default()),
+        validate(
+            REQUESTS,
+            config(),
+            Method::Post,
+            &headers,
+            &Policy::default()
+        ),
         Err(HttpError::UnsupportedVersion)
     );
     headers.last_mut().unwrap().value = "2025-03-26";
-    headers.push(Header { name: "mcp-protocol-version", value: "2025-03-26" });
+    headers.push(Header {
+        name: "mcp-protocol-version",
+        value: "2025-03-26",
+    });
     assert_eq!(
-        validate(REQUESTS, config(), Method::Post, &headers, &Policy::default()),
+        validate(
+            REQUESTS,
+            config(),
+            Method::Post,
+            &headers,
+            &Policy::default()
+        ),
         Err(HttpError::InvalidHeader)
     );
 }
@@ -186,7 +257,10 @@ fn authentication_and_origin_are_checked_before_returning_a_dispatchable_kind() 
         Err(HttpError::Unauthorized)
     );
     let mut headers = HEADERS.to_vec();
-    headers.push(Header { name: "Origin", value: "https://untrusted.invalid" });
+    headers.push(Header {
+        name: "Origin",
+        value: "https://untrusted.invalid",
+    });
     assert_eq!(
         validate(REQUESTS, config(), Method::Post, &headers, &policy),
         Err(HttpError::Forbidden)
@@ -196,7 +270,10 @@ fn authentication_and_origin_are_checked_before_returning_a_dispatchable_kind() 
         validate(REQUESTS, config(), Method::Post, &headers, &policy),
         Ok(BodyKind::Request)
     );
-    headers.push(Header { name: "authorization", value: "another-test-token" });
+    headers.push(Header {
+        name: "authorization",
+        value: "another-test-token",
+    });
     assert_eq!(
         validate(REQUESTS, config(), Method::Post, &headers, &policy),
         Err(HttpError::InvalidHeader)
@@ -209,7 +286,10 @@ fn required_session_is_validated_once_for_the_whole_batch() {
     cfg.sessions = true;
     let policy = Policy::default();
     let mut headers = HEADERS.to_vec();
-    headers.push(Header { name: "Mcp-Session-Id", value: "session-a" });
+    headers.push(Header {
+        name: "Mcp-Session-Id",
+        value: "session-a",
+    });
     assert_eq!(
         validate(REQUESTS, cfg, Method::Post, &headers, &policy),
         Ok(BodyKind::Request)
@@ -227,7 +307,10 @@ fn missing_expired_or_invalid_sessions_cannot_dispatch_batches() {
         Err(HttpError::BadRequest)
     );
     let mut headers = HEADERS.to_vec();
-    headers.push(Header { name: "Mcp-Session-Id", value: "expired" });
+    headers.push(Header {
+        name: "Mcp-Session-Id",
+        value: "expired",
+    });
     assert_eq!(
         validate(REQUESTS, cfg, Method::Post, &headers, &Policy::default()),
         Err(HttpError::SessionExpired)
@@ -260,21 +343,44 @@ fn both_accept_types_and_json_content_type_are_required() {
     let mut headers = HEADERS;
     headers[0].value = "text/plain";
     assert_eq!(
-        validate(REQUESTS, config(), Method::Post, &headers, &Policy::default()),
+        validate(
+            REQUESTS,
+            config(),
+            Method::Post,
+            &headers,
+            &Policy::default()
+        ),
         Err(HttpError::UnsupportedMediaType)
     );
     headers[0].value = "Application/JSON; charset=utf-8";
-    for accept in ["application/json", "text/event-stream", "*/*", "application/json, text/event-stream;q=0"] {
+    for accept in [
+        "application/json",
+        "text/event-stream",
+        "*/*",
+        "application/json, text/event-stream;q=0",
+    ] {
         headers[1].value = accept;
         assert_eq!(
-            validate(REQUESTS, config(), Method::Post, &headers, &Policy::default()),
+            validate(
+                REQUESTS,
+                config(),
+                Method::Post,
+                &headers,
+                &Policy::default()
+            ),
             Err(HttpError::NotAcceptable),
             "{accept}"
         );
     }
     headers[1].value = http::ACCEPT;
     assert_eq!(
-        validate(REQUESTS, config(), Method::Post, &headers, &Policy::default()),
+        validate(
+            REQUESTS,
+            config(),
+            Method::Post,
+            &headers,
+            &Policy::default()
+        ),
         Ok(BodyKind::Request)
     );
 }
@@ -292,7 +398,10 @@ fn batch_preflight_rejects_empty_nonarray_mixed_and_initialize_envelopes() {
     ] {
         let mut tokens = [Token::EMPTY; 128];
         let document = Document::parse(input.as_bytes(), &mut tokens, Limits::default()).unwrap();
-        assert!(Batch::parse(document.root(), "2025-03-26", 16).is_err(), "{input}");
+        assert!(
+            Batch::parse(document.root(), "2025-03-26", 16).is_err(),
+            "{input}"
+        );
     }
 }
 
@@ -300,8 +409,17 @@ fn batch_preflight_rejects_empty_nonarray_mixed_and_initialize_envelopes() {
 fn batch_preflight_respects_revision_and_item_limits_before_dispatch() {
     let mut tokens = [Token::EMPTY; 128];
     let document = Document::parse(REQUESTS.as_bytes(), &mut tokens, Limits::default()).unwrap();
-    for version in ["2024-11-05", "2025-06-18", "2025-11-25", "2026-07-28", "unknown"] {
-        assert!(Batch::parse(document.root(), version, 16).is_err(), "{version}");
+    for version in [
+        "2024-11-05",
+        "2025-06-18",
+        "2025-11-25",
+        "2026-07-28",
+        "unknown",
+    ] {
+        assert!(
+            Batch::parse(document.root(), version, 16).is_err(),
+            "{version}"
+        );
     }
     assert!(Batch::parse(document.root(), "2025-03-26", 1).is_err());
     assert!(Batch::parse(document.root(), "2025-03-26", 0).is_err());

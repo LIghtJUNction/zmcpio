@@ -43,7 +43,9 @@ pub struct Batch<'a> {
 impl<'a> Batch<'a> {
     pub fn parse(raw: Value<'a>, version: &str, max_items: usize) -> Result<Self, Error> {
         check_version(version)?;
-        if raw.kind() != Kind::Array { return Err(invalid(raw)); }
+        if raw.kind() != Kind::Array {
+            return Err(invalid(raw));
+        }
         let mut len = 0;
         let mut requests = false;
         let mut notifications = false;
@@ -75,17 +77,30 @@ impl<'a> Batch<'a> {
         Ok(Self { raw, len, kind })
     }
 
-    pub const fn version(self) -> &'static str { LEGACY_BATCH_VERSION }
-    pub const fn len(self) -> usize { self.len }
-    pub const fn is_empty(self) -> bool { false }
-    pub const fn kind(self) -> BatchKind { self.kind }
-    pub fn raw(self) -> Value<'a> { self.raw }
+    pub const fn version(self) -> &'static str {
+        LEGACY_BATCH_VERSION
+    }
+    pub const fn len(self) -> usize {
+        self.len
+    }
+    pub const fn is_empty(self) -> bool {
+        false
+    }
+    pub const fn kind(self) -> BatchKind {
+        self.kind
+    }
+    pub fn raw(self) -> Value<'a> {
+        self.raw
+    }
 
     /// Incoming request-batch invalid entries need an id:null/-32600 response.
     /// Do not answer response entries, including malformed response-batch items.
     /// ID uniqueness, lifecycle ordering, authorization and execution are host-owned.
     pub fn entries(self) -> impl Iterator<Item = Entry<'a>> {
-        self.raw.elements().map(|raw| Entry { raw, message: rpc::parse(raw) })
+        self.raw.elements().map(|raw| Entry {
+            raw,
+            message: rpc::parse(raw),
+        })
     }
 }
 
@@ -100,11 +115,16 @@ pub fn encode_requests(
 ) -> Result<usize, Error> {
     check_version(version)?;
     check_count(messages.len(), max_items)?;
-    if messages.is_empty() { return Err(Error::new(ErrorKind::InvalidRpc, 0)); }
+    if messages.is_empty() {
+        return Err(Error::new(ErrorKind::InvalidRpc, 0));
+    }
     let mut needed = 1;
     for value in messages {
         check_profile(*value)?;
-        if !matches!(rpc::parse(*value)?, Message::Request(_) | Message::Notification(_)) {
+        if !matches!(
+            rpc::parse(*value)?,
+            Message::Request(_) | Message::Notification(_)
+        ) {
             return Err(invalid(*value));
         }
         needed = append_size(needed, value.raw().len())?;
@@ -127,43 +147,64 @@ pub fn encode_responses(
     let mut needed = 1;
     let mut count = 0;
     for value in responses.iter().flatten() {
-        if !matches!(rpc::parse(*value)?, Message::Success { .. } | Message::Failure { .. }) {
+        if !matches!(
+            rpc::parse(*value)?,
+            Message::Success { .. } | Message::Failure { .. }
+        ) {
             return Err(invalid(*value));
         }
         needed = append_size(needed, value.raw().len())?;
         count += 1;
     }
-    if count == 0 { return Ok(0); }
+    if count == 0 {
+        return Ok(0);
+    }
     write_array(responses.iter().flatten().copied(), needed, output)
 }
 
 fn check_version(version: &str) -> Result<(), Error> {
-    if version == LEGACY_BATCH_VERSION { Ok(()) }
-    else { Err(Error::new(ErrorKind::UnsupportedVersion, 0)) }
+    if version == LEGACY_BATCH_VERSION {
+        Ok(())
+    } else {
+        Err(Error::new(ErrorKind::UnsupportedVersion, 0))
+    }
 }
 fn check_count(count: usize, max: usize) -> Result<(), Error> {
-    if count <= max { Ok(()) }
-    else { Err(Error::capacity(ErrorKind::Members, 0, count)) }
+    if count <= max {
+        Ok(())
+    } else {
+        Err(Error::capacity(ErrorKind::Members, 0, count))
+    }
 }
 fn check_profile(value: Value<'_>) -> Result<(), Error> {
     // Check before dispatch even if the surrounding JSON-RPC envelope is invalid.
-    if value.get("method").and_then(Value::string).is_some_and(|s| s.matches("initialize")) {
+    if value
+        .get("method")
+        .and_then(Value::string)
+        .is_some_and(|s| s.matches("initialize"))
+    {
         return Err(invalid(value));
     }
     // Server::handle uses this metadata to select modern semantics. A legacy
     // batch must not smuggle a modern per-request envelope through that boundary.
-    if value.get("params").and_then(|v| v.get("_meta"))
-        .and_then(|v| v.get(VERSION_KEY)).is_some()
+    if value
+        .get("params")
+        .and_then(|v| v.get("_meta"))
+        .and_then(|v| v.get(VERSION_KEY))
+        .is_some()
     {
         return Err(Error::new(ErrorKind::UnsupportedVersion, value.offset()));
     }
     Ok(())
 }
-fn invalid(value: Value<'_>) -> Error { Error::new(ErrorKind::InvalidRpc, value.offset()) }
+fn invalid(value: Value<'_>) -> Error {
+    Error::new(ErrorKind::InvalidRpc, value.offset())
+}
 
 // '[' + N values + (N-1) commas + ']' = 1 + sum(value.len() + 1).
 fn append_size(size: usize, item: usize) -> Result<usize, Error> {
-    size.checked_add(item).and_then(|v| v.checked_add(1))
+    size.checked_add(item)
+        .and_then(|v| v.checked_add(1))
         .ok_or(Error::capacity(ErrorKind::Buffer, 0, usize::MAX))
 }
 fn write_array<'a>(
@@ -178,7 +219,9 @@ fn write_array<'a>(
     w.raw(b"[");
     let mut comma = false;
     for value in values {
-        if comma { w.raw(b","); }
+        if comma {
+            w.raw(b",");
+        }
         w.raw(value.raw().as_bytes());
         comma = true;
     }
