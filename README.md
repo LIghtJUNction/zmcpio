@@ -14,19 +14,18 @@ publisher and **must not** be used as a dependency for this implementation.
 
 ```toml
 [dependencies]
-zmcpio = { version = "0.2", default-features = false }
+zmcpio = { version = "0.3", default-features = false }
 ```
 
-The published 0.2.0 release predates the HTTP and extension modules below. Until
-those changes are released, use the source checkout or the implementation branch:
+To use the stdio and HTTP/1.1 I/O adapters, enable the optional `std` feature:
 
 ```toml
 [dependencies]
-zmcpio = { git = "https://github.com/LIghtJUNction/zmcpio", branch = "feat/streamable-http-20261111", default-features = false, features = ["std"] }
+zmcpio = { version = "0.3", default-features = false, features = ["std"] }
 ```
 
-On that branch, `std` enables `stdio::StdioTransport` and `http_io`. The protocol
-core and `zcall` bridge do not require an allocator. Process/socket setup may allocate.
+The protocol core and `zcall` bridge do not require an allocator. Process/socket
+setup may allocate. HTTPS requires a caller-supplied verified TLS stream.
 
 ## Boundary
 
@@ -81,9 +80,9 @@ pagination, error policies and custom transports. On Windows use `.exe` paths.
 | Other MCP methods | Explicitly enabled resource/prompt/completion/logging routes, callback and MRTR envelopes, subscription validation, version-specific task messages |
 | Optional I/O | Real stdio process adapter and bounded HTTP/1.1 framing over supplied streams |
 
-The new transport and extension APIs are available in this source checkout;
-published 0.2.0 predates them. See [HTTP](docs/HTTP.md) and
-[extensions](docs/EXTENSIONS.md) for the exact contracts and executable examples.
+Streamable HTTP, legacy SSE and the opt-in extension APIs ship in 0.3.0.
+See [HTTP](docs/HTTP.md) and [extensions](docs/EXTENSIONS.md) for their
+contracts and executable examples.
 See [validation](docs/VALIDATION.md) for reproducible tests and benchmark limits.
 A local modern HTTP server and client can be run in separate terminals:
 
