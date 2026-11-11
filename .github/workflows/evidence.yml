@@ -29,7 +29,9 @@ jobs:
             lscpu
           } > "$RUNNER_TEMP/zmcpio-evidence/environment.txt"
           cargo bench --locked --bench core > "$RUNNER_TEMP/zmcpio-evidence/benchmark.csv"
+          cargo bench --locked --bench client > "$RUNNER_TEMP/zmcpio-evidence/client-benchmark.csv"
           cat "$RUNNER_TEMP/zmcpio-evidence/benchmark.csv"
+          cat "$RUNNER_TEMP/zmcpio-evidence/client-benchmark.csv"
           git archive --format=tar.gz -o "$RUNNER_TEMP/zmcpio-evidence/source.tar.gz" HEAD
       - id: candidate
         env:

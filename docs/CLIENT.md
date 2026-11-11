@@ -106,6 +106,12 @@ adapters cannot encode that field. Actual tool failures remain visible inside th
 JSON envelope. The model receives that JSON representation, not provider-native
 image/audio tool-result blocks. Nothing is automatically flattened or fetched.
 
+This full-envelope adapter is **not a privacy filter**: `_meta` and nested
+metadata also reach the model. If a server/application contract marks any data
+as client-only or confidential, do not pass that result through the convenience
+adapter unchanged. Construct an application-filtered `zcall::Content::ToolResult`
+instead, retaining the original model call ID and the tool-failure indication.
+
 `NativeErrorFlag` is an explicit opt-in through `content_with_encoding` or
 `append_result_with_encoding` for a format supporting it, such as Anthropic.
 An unsupported destination still fails in zcall rather than silently dropping

@@ -30,6 +30,10 @@ exclude = ["comparison"]
 name = "core"
 harness = false
 
+[[bench]]
+name = "client"
+harness = false
+
 [[example]]
 name = "mcp_client"
 required-features = ["std"]

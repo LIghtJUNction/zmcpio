@@ -1,5 +1,11 @@
 # MCP tools profile
 
+Client behavior is described in [CLIENT.md](CLIENT.md). The server's legacy
+profile remains 2025-11-25; the new client additionally accepts a server selecting
+the compatible 2025-06-18 tools profile. Older batch-based revisions are not
+advertised. Modern discovery/list responses include private, zero-TTL cache
+hints; the client does not cache or grant permission from those hints.
+
 Normative references checked 2026-11-11:
 - https://modelcontextprotocol.io/specification/2026-07-28
 - https://github.com/modelcontextprotocol/modelcontextprotocol/blob/main/schema/2026-07-28/schema.ts

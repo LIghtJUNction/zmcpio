@@ -1,5 +1,14 @@
 # Performance
 
+Client/bridge measurements use `cargo bench --locked --bench client`.
+`client_call_encode_receive` includes a fresh bounded client, request encoding and
+full response parsing/correlation. `client_server_roundtrip` uses a persistent
+client and validates/encodes both sides. `zcall_bridge_encode_receive` also prepares an
+escaped model call and converts the entire correlated MCP result through zcall's
+checked JSON API. Caller storage is allocated outside timing; each case asserts
+zero measured allocator calls. These exclude process startup, IPC, HTTP, model
+inference and application tool business logic. They are not network latency SLAs.
+
 Run `cargo bench --locked --bench core`. Capture the git SHA, `rustc -Vv`, CPU,
 OS and power policy. Initializers construct a fresh legacy Server for every
 operation; discovery and tool calls include modern per-request metadata checks.

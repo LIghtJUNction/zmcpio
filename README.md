@@ -23,8 +23,9 @@ Enable `features = ["std"]` for `stdio::StdioTransport`. The protocol core and
 
 `zmcpio` parses complete JSON-RPC messages and returns borrowed actions.
 `Action::CallTool` does not execute anything. An application checks policy,
-runs its tool, then calls `Server::tool_result`. No agent loop, provider adapter,
-HTTP stack, database, runtime, or model dependency is included.
+runs its tool, then calls `Server::tool_result`. No agent loop, HTTP stack,
+database, model runtime or automatic network requests are included. Shared model
+types and provider-format conversion come from `zcall`.
 
 `zharness` and `zmcpio` remain independent components, sharing the `zcall` contract:
 
@@ -76,7 +77,7 @@ and HTTP/TLS/SSE implementations are not implemented here. Modern `input_require
 is surfaced distinctly for explicit caller handling, never automatically continued.
 HTTP/custom transports supply complete messages through the transport boundary. The generic
 RPC types preserve messages for application-owned extensions. Do not describe
-this release candidate as full MCP conformance.
+this tools profile as full MCP conformance.
 
 ## Memory contract
 

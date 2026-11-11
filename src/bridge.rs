@@ -11,6 +11,10 @@
 //! The default portable representation retains `isError` inside that JSON
 //! envelope; it does not add a provider-native error flag unsupported by some
 //! zcall targets. [`ResultEncoding::NativeErrorFlag`] is an explicit opt-in.
+//!
+//! This is not a privacy filter: `_meta` and nested metadata reach the model.
+//! For client-only/confidential fields, construct an application-filtered model
+//! tool result instead, preserving the model call ID and tool-failure state.
 
 use crate::{
     Error, ErrorKind,

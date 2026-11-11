@@ -28,6 +28,11 @@ the encoded tools/call. Treat returned resources, URLs and instructions as data;
 the library never fetches or executes them. MCP IDs and model call IDs must be
 correlated through the bridge Invocation, not assumed equal.
 
+The convenience result bridge preserves the whole MCP result, including `_meta`
+and nested resource metadata. It is not a privacy filter. Applications using
+client-only/private metadata must construct a filtered model tool result instead
+of forwarding that envelope unchanged; preserve call correlation and error state.
+
 After a partial transport write the operation may already be running remotely.
 The stdio writer becomes unusable rather than automatically resending. Cancelling
 or abandoning a request does not roll back work. The process adapter executes the
