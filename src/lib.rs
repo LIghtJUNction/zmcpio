@@ -12,6 +12,11 @@ pub use zcall;
 #[cfg(feature = "std")]
 pub mod stdio;
 
+#[cfg(feature = "std")]
+pub mod http_io;
+
+pub mod http;
+pub mod sse;
 pub mod bridge;
 pub mod client;
 pub mod json;

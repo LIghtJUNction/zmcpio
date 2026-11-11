@@ -26,6 +26,8 @@ jobs:
       - name: Lint adapters
         run: cargo +1.99.1 clippy --locked --all-targets --all-features -- -D warnings
       - name: Formatting
-        run: cargo +1.99.1 fmt --all -- --check
+        run: |
+          cargo +1.99.1 fmt --all
+          git diff --exit-code -- '*.rs'
       - name: Audit dependency closure
         run: python scripts/audit.py
