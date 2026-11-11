@@ -3,7 +3,7 @@
 //! cargo run --features std --example mcp_http -- client 127.0.0.1:8080
 //! The demo is loopback-only, has no privileged tools, and is not a TLS server.
 use std::{
-    io::{BufReader, BufWriter, Read},
+    io::{BufReader, BufWriter, Read, Write},
     net::{SocketAddr, TcpListener, TcpStream},
     time::Duration,
 };
@@ -89,6 +89,33 @@ fn serve(socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
     };
     let mut request = [0; 16384];
     let mut body = BodyReader::new(&mut reader, head, request.len())?;
+    if let Some(expect) = head.header("expect") {
+        let status = if !expect.eq_ignore_ascii_case("100-continue")
+            || head.headers().filter(|h| h.name.eq_ignore_ascii_case("expect")).count() != 1
+        {
+            417
+        } else if !policy.authorized(headers) {
+            401
+        } else if head.header("origin").is_some_and(|origin| !policy.origin_allowed(origin)) {
+            403
+        } else if method != Method::Post {
+            405
+        } else if !head.header("content-type").is_some_and(|value| {
+            value.split(';').next().is_some_and(|mime| mime.trim().eq_ignore_ascii_case(http::JSON))
+        }) {
+            415
+        } else {
+            100
+        };
+        if status != 100 {
+            let allow = [Header { name: "Allow", value: "POST" }];
+            let fields = if status == 405 { &allow[..] } else { &[] };
+            http_io::write_response(&mut socket, status, fields, b"")?;
+            return Ok(());
+        }
+        socket.write_all(b"HTTP/1.1 100 Continue\r\n\r\n")?;
+        socket.flush()?;
+    }
     let len = http_io::read_body(&mut body, &mut request)?;
     let mut tokens = [Token::EMPTY; 1024];
     let message = if method == Method::Post {
@@ -108,7 +135,22 @@ fn serve(socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
                 return Ok(());
             }
         };
-        Some(rpc::parse(document.root())?)
+        match rpc::parse(document.root()) {
+            Ok(message) => Some(message),
+            Err(_) => {
+                let n = rpc::failure(None, -32600, "Invalid Request", None, &mut output)?;
+                http_io::write_response(
+                    &mut socket,
+                    400,
+                    &[Header {
+                        name: "Content-Type",
+                        value: http::JSON,
+                    }],
+                    &output[..n],
+                )?;
+                return Ok(());
+            }
+        }
     } else {
         None
     };
@@ -124,13 +166,21 @@ fn serve(socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
         };
         let requested = http::header(headers, "mcp-protocol-version")?.unwrap_or("");
         let n = error.write_rpc(id, config.version, requested, &mut output)?;
+        let response_headers = [
+            Header {
+                name: "Content-Type",
+                value: http::JSON,
+            },
+            Header {
+                name: "Allow",
+                value: "POST",
+            },
+        ];
+        let count = if error.status() == 405 { 2 } else { 1 };
         http_io::write_response(
             &mut socket,
             error.status(),
-            &[Header {
-                name: "Content-Type",
-                value: http::JSON,
-            }],
+            &response_headers[..count],
             &output[..n],
         )?;
         return Ok(());
@@ -262,7 +312,7 @@ fn call(address: SocketAddr) -> Result<()> {
     }
     let mut reader = BufReader::with_capacity(8192, socket);
     let mut head_bytes = [0; 8192];
-    let head = http_io::read_head(&mut reader, &mut head_bytes)?;
+    let head = http_io::read_response_head(&mut reader, &mut head_bytes, 8)?;
     let mode = http::response_mode(
         head.status().ok_or("missing response status")?,
         head.header("content-type"),

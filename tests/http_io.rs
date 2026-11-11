@@ -48,6 +48,9 @@ fn reject_smuggling_and_header_injection() {
         "POST /mcp HTTP/1.1\nHost: x\n\n",
         "POST //evil/x HTTP/1.1\r\nHost: x\r\n\r\n",
         "POST /mcp HTTP/1.1\r\nHost: x\r\nOrigin: x\r\norigin: y\r\n\r\n",
+        "POST /mcp HTTP/1.0\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "HTTP/1.0 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n",
+        "HTTP/1.1 200 OK\r\nContent-Encoding: identity\r\ncontent-encoding: gzip\r\n\r\n",
     ] {
         let mut reader = Cursor::new(bytes.as_bytes());
         let mut head = [0; 512];

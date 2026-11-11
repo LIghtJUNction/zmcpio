@@ -250,7 +250,8 @@ impl<'a> Server<'a> {
             Method::ToolsCall.validate_params(params)?;
             if let Some(task) = params.and_then(|value| value.get("task")) {
                 object_optional(Some(task))?;
-                if era != Era::Legacy || self.legacy_version != LEGACY_PROTOCOL_VERSION
+                if era != Era::Legacy
+                    || self.legacy_version != LEGACY_PROTOCOL_VERSION
                     || !self.legacy_tasks_enabled()
                 {
                     return Err(Error::new(ErrorKind::InvalidParams, task.offset()));
@@ -281,7 +282,8 @@ impl<'a> Server<'a> {
             && self.extensions.contains(&method)
         {
             method.validate_params(request.params)?;
-            if era == Era::Modern && method.needs_task_capability(request.params)
+            if era == Era::Modern
+                && method.needs_task_capability(request.params)
                 && !extensions::has_task_capability(client_capabilities)
             {
                 return missing_task_capability(request.id, output).map(Action::Reply);
@@ -306,10 +308,13 @@ impl<'a> Server<'a> {
             .map(Action::Reply);
         }
         let p = object_optional(request.params)?.ok_or(Error::new(ErrorKind::InvalidParams, 0))?;
-        let requested = p.require("protocolVersion")?
+        let requested = p
+            .require("protocolVersion")?
             .string()
             .ok_or(Error::new(ErrorKind::InvalidParams, p.offset()))?;
-        let negotiated = crate::client::LEGACY_COMPATIBLE_VERSIONS.iter().copied()
+        let negotiated = crate::client::LEGACY_COMPATIBLE_VERSIONS
+            .iter()
+            .copied()
             .find(|version| requested.matches(version))
             .unwrap_or(LEGACY_PROTOCOL_VERSION);
         validate_capabilities(p.require("capabilities")?)?;
@@ -376,10 +381,13 @@ impl<'a> Server<'a> {
         {
             return Err(Error::new(ErrorKind::UnexpectedResponse, result.offset()));
         }
-        if method == Method::TasksGet && context.era == Era::Modern
+        if method == Method::TasksGet
+            && context.era == Era::Modern
             && let Some(requests) = result.get("inputRequests")
         {
-            let caps = context.client_capabilities.ok_or(Error::new(ErrorKind::State, 0))?;
+            let caps = context
+                .client_capabilities
+                .ok_or(Error::new(ErrorKind::State, 0))?;
             extensions::validate_input_requests(requests, caps)?;
         }
         if let Some(kind) = result.get("resultType")
@@ -435,7 +443,11 @@ impl<'a> Server<'a> {
             }
         } else if self.legacy_version != LEGACY_PROTOCOL_VERSION
             || !self.legacy_tasks_enabled()
-            || context.request.params.and_then(|value| value.get("task")).is_none()
+            || context
+                .request
+                .params
+                .and_then(|value| value.get("task"))
+                .is_none()
         {
             return Err(Error::new(ErrorKind::State, 0));
         }
@@ -458,7 +470,9 @@ impl<'a> Server<'a> {
                 self.write_meta(&mut w);
             }
             for (key, value) in task.members() {
-                if key.matches("resultType") { continue; }
+                if key.matches("resultType") {
+                    continue;
+                }
                 w.raw(b",");
                 extensions::write_key(&mut w, key);
                 w.raw(value.raw().as_bytes());
@@ -469,12 +483,14 @@ impl<'a> Server<'a> {
     }
 
     fn modern_tasks_enabled(&self) -> bool {
-        [Method::TasksGet, Method::TasksUpdate, Method::TasksCancel].iter()
+        [Method::TasksGet, Method::TasksUpdate, Method::TasksCancel]
+            .iter()
             .all(|method| self.extensions.contains(method))
     }
 
     fn legacy_tasks_enabled(&self) -> bool {
-        self.extensions.contains(&Method::TasksGet) && self.extensions.contains(&Method::TasksResult)
+        self.extensions.contains(&Method::TasksGet)
+            && self.extensions.contains(&Method::TasksResult)
     }
 
     /// Encode modern MRTR. Input actions are not executed, and opaque requestState
@@ -493,7 +509,9 @@ impl<'a> Server<'a> {
             return Err(Error::new(ErrorKind::State, 0));
         }
         if let Some(requests) = input_requests {
-            let caps = context.client_capabilities.ok_or(Error::new(ErrorKind::State, 0))?;
+            let caps = context
+                .client_capabilities
+                .ok_or(Error::new(ErrorKind::State, 0))?;
             extensions::validate_input_requests(requests, caps)?;
         }
         let mut w = Writer::new(output);
@@ -568,24 +586,40 @@ impl<'a> Server<'a> {
             w.raw(b"}");
         }
         let mut comma = self.capabilities.tools;
-        let resource = self.extensions.iter().any(|method| matches!(
-            method, Method::ResourcesList | Method::ResourcesTemplatesList | Method::ResourcesRead
-            | Method::ResourcesSubscribe | Method::ResourcesUnsubscribe
-        ));
-        let prompt = self.extensions.iter().any(|method| matches!(
-            method, Method::PromptsList | Method::PromptsGet
-        ));
+        let resource = self.extensions.iter().any(|method| {
+            matches!(
+                method,
+                Method::ResourcesList
+                    | Method::ResourcesTemplatesList
+                    | Method::ResourcesRead
+                    | Method::ResourcesSubscribe
+                    | Method::ResourcesUnsubscribe
+            )
+        });
+        let prompt = self
+            .extensions
+            .iter()
+            .any(|method| matches!(method, Method::PromptsList | Method::PromptsGet));
         for (name, enabled) in [
             ("resources", resource),
             ("prompts", prompt),
-            ("completions", self.extensions.contains(&Method::CompletionComplete)),
-            ("logging", self.extensions.contains(&Method::LoggingSetLevel)),
+            (
+                "completions",
+                self.extensions.contains(&Method::CompletionComplete),
+            ),
+            (
+                "logging",
+                self.extensions.contains(&Method::LoggingSetLevel),
+            ),
         ] {
             if enabled {
-                if comma { w.raw(b","); }
+                if comma {
+                    w.raw(b",");
+                }
                 w.text(name);
                 w.raw(b":{");
-                if name == "resources" && era == Era::Legacy
+                if name == "resources"
+                    && era == Era::Legacy
                     && self.extensions.contains(&Method::ResourcesSubscribe)
                     && self.extensions.contains(&Method::ResourcesUnsubscribe)
                 {
@@ -596,12 +630,20 @@ impl<'a> Server<'a> {
             }
         }
         if era == Era::Modern && self.modern_tasks_enabled() {
-            if comma { w.raw(b","); }
+            if comma {
+                w.raw(b",");
+            }
             w.raw(b"\"extensions\":{\"io.modelcontextprotocol/tasks\":{}}");
-        } else if era == Era::Legacy && legacy_version == LEGACY_PROTOCOL_VERSION
-            && self.extensions.iter().any(|method| method.is_task() && method.available(era))
+        } else if era == Era::Legacy
+            && legacy_version == LEGACY_PROTOCOL_VERSION
+            && self
+                .extensions
+                .iter()
+                .any(|method| method.is_task() && method.available(era))
         {
-            if comma { w.raw(b","); }
+            if comma {
+                w.raw(b",");
+            }
             w.raw(b"\"tasks\":{");
             let mut task_comma = false;
             if self.extensions.contains(&Method::TasksList) {
@@ -609,12 +651,16 @@ impl<'a> Server<'a> {
                 task_comma = true;
             }
             if self.extensions.contains(&Method::TasksCancel) {
-                if task_comma { w.raw(b","); }
+                if task_comma {
+                    w.raw(b",");
+                }
                 w.raw(b"\"cancel\":{}");
                 task_comma = true;
             }
             if self.capabilities.tools && self.legacy_tasks_enabled() {
-                if task_comma { w.raw(b","); }
+                if task_comma {
+                    w.raw(b",");
+                }
                 w.raw(b"\"requests\":{\"tools\":{\"call\":{}}}");
             }
             w.raw(b"}");

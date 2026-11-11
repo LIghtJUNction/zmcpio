@@ -21,7 +21,10 @@ fn no_body_statuses_omit_content_length_and_preserve_next_response() {
         assert_eq!(head.status(), Some(status));
         assert_eq!(head.header("connection"), Some("keep-alive"));
         assert_eq!(head.header("transfer-encoding"), None);
-        assert_eq!(head.header("content-length"), if status == 200 { Some("2") } else { None });
+        assert_eq!(
+            head.header("content-length"),
+            if status == 200 { Some("2") } else { None }
+        );
         let mut body = BodyReader::new(&mut reader, head, 8).unwrap();
         let mut output = [0; 8];
         let len = http_io::read_body(&mut body, &mut output).unwrap();
@@ -155,7 +158,10 @@ fn forbidden_chunk_extension_controls_are_terminal() {
         let head = http_io::read_head(&mut reader, &mut storage).unwrap();
         let mut body = BodyReader::new(&mut reader, head, 16).unwrap();
         assert!(body.read(&mut [0; 16]).is_err(), "{byte}");
-        assert!(body.read(&mut [0; 16]).is_err(), "failed body must stay failed");
+        assert!(
+            body.read(&mut [0; 16]).is_err(),
+            "failed body must stay failed"
+        );
     }
 }
 
@@ -168,7 +174,12 @@ struct Interrupting<'a> {
 }
 impl<'a> Interrupting<'a> {
     fn new(bytes: &'a [u8]) -> Self {
-        Self { bytes, at: 0, read_interrupt: true, fill_interrupt: true }
+        Self {
+            bytes,
+            at: 0,
+            read_interrupt: true,
+            fill_interrupt: true,
+        }
     }
 }
 impl Read for Interrupting<'_> {
@@ -225,7 +236,10 @@ fn generic_body_helper_retries_interrupted_reads_including_extra_byte_probe() {
     for capacity in [3, 8] {
         let mut reader = Interrupting::new(b"abc");
         let mut output = [0; 8];
-        assert_eq!(http_io::read_body(&mut reader, &mut output[..capacity]).unwrap(), 3);
+        assert_eq!(
+            http_io::read_body(&mut reader, &mut output[..capacity]).unwrap(),
+            3
+        );
         assert_eq!(&output[..3], b"abc");
     }
     let mut reader = Interrupting::new(b"abcd");

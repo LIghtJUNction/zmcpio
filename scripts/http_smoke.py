@@ -2,6 +2,9 @@
 import http.client
 import json
 import pathlib
+import queue
+import socket
+import threading
 import subprocess
 import sys
 from urllib.parse import urlsplit
@@ -14,9 +17,16 @@ VERSION = "2026-07-28"
 
 def launch(mode):
     process = subprocess.Popen([str(EXE), "server", "0", mode, "--once"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-    url = process.stdout.readline().strip()
-    assert url.startswith("http://127.0.0.1:"), url
-    return process, urlsplit(url)
+    lines = queue.Queue()
+    threading.Thread(target=lambda: lines.put(process.stdout.readline()), daemon=True).start()
+    try:
+        url = lines.get(timeout=15).strip()
+        assert url.startswith("http://127.0.0.1:"), url
+        return process, urlsplit(url)
+    except BaseException:
+        process.kill()
+        process.communicate()
+        raise
 
 
 def close(process):
@@ -95,4 +105,70 @@ try:
     connection.close()
 finally:
     close(process)
-print("HTTP interoperability passed: Python JSON/SSE, Rust JSON/SSE, Origin rejection")
+for payload, error_code in [("{", -32700), ('{"jsonrpc":"2.0","id":true,"method":"tools/call"}', -32600), ("[]", -32600)]:
+    process, endpoint = launch("json")
+    try:
+        connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=10)
+        connection.request("POST", endpoint.path, payload, {
+            "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        })
+        response = connection.getresponse()
+        assert response.status == 400, response.status
+        assert json.loads(response.read())["error"]["code"] == error_code
+        connection.close()
+    finally:
+        close(process)
+
+for method in ["GET", "DELETE", "PUT"]:
+    process, endpoint = launch("json")
+    try:
+        connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=10)
+        connection.request(method, endpoint.path)
+        response = connection.getresponse()
+        assert response.status == 405, response.status
+        assert response.getheader("Allow") == "POST"
+        response.read()
+        connection.close()
+    finally:
+        close(process)
+for expectation in ["100-continue", "unsupported"]:
+    process, endpoint = launch("json")
+    try:
+        payload = json.dumps({
+            "jsonrpc": "2.0", "id": 72, "method": "tools/call",
+            "params": {"name": "echo", "arguments": {"expect": "accepted"},
+                "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": VERSION,
+                    "io.modelcontextprotocol/clientCapabilities": {},
+                },
+            },
+        }).encode()
+        with socket.create_connection((endpoint.hostname, endpoint.port), timeout=10) as peer:
+            headers = (
+                f"POST {endpoint.path} HTTP/1.1\r\nHost: {endpoint.netloc}\r\n"
+                f"Content-Type: application/json\r\nAccept: application/json, text/event-stream\r\n"
+                f"MCP-Protocol-Version: {VERSION}\r\nMcp-Method: tools/call\r\nMcp-Name: echo\r\n"
+                f"Content-Length: {len(payload)}\r\nExpect: {expectation}\r\n\r\n"
+            )
+            peer.sendall(headers.encode())
+            if expectation == "100-continue":
+                interim = bytearray()
+                while not interim.endswith(b"\r\n\r\n"):
+                    byte = peer.recv(1)
+                    assert byte and len(interim) < 8192, "missing or oversized interim response"
+                    interim.extend(byte)
+                assert interim == b"HTTP/1.1 100 Continue\r\n\r\n", interim
+                peer.sendall(payload)
+            response = http.client.HTTPResponse(peer)
+            response.begin()
+            if expectation == "100-continue":
+                assert response.status == 200, response.status
+                result = json.loads(response.read())
+                assert result["id"] == 72 and "accepted" in result["result"]["content"][0]["text"]
+            else:
+                assert response.status == 417, response.status
+                response.read()
+            response.close()
+    finally:
+        close(process)
+print("HTTP interoperability passed: Python/Rust JSON/SSE, Origin rejection, malformed RPC, methods, 100-continue")

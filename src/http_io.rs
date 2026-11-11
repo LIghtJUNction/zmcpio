@@ -146,6 +146,11 @@ pub fn read_head<'a, R: BufRead>(reader: &mut R, output: &'a mut [u8]) -> io::Re
     }
     let raw =
         core::str::from_utf8(&output[..used]).map_err(|_| invalid("HTTP head is not UTF-8"))?;
+    parse_head(raw)
+}
+
+fn parse_head(raw: &str) -> io::Result<Head<'_>> {
+    let used = raw.len();
     let first_end = raw
         .find("\r\n")
         .ok_or_else(|| invalid("missing HTTP start"))?;
@@ -190,6 +195,7 @@ pub fn read_head<'a, R: BufRead>(reader: &mut R, output: &'a mut [u8]) -> io::Re
         "content-length",
         "transfer-encoding",
         "content-type",
+        "content-encoding",
         "host",
         "authorization",
         "origin",
@@ -208,6 +214,11 @@ pub fn read_head<'a, R: BufRead>(reader: &mut R, output: &'a mut [u8]) -> io::Re
             return Err(invalid("duplicate security or framing header"));
         }
     }
+    if (first == "HTTP/1.0" || third == "HTTP/1.0")
+        && head.header("transfer-encoding").is_some()
+    {
+        return Err(invalid("HTTP/1.0 does not support Transfer-Encoding"));
+    }
     if head.header("content-length").is_some() && head.header("transfer-encoding").is_some() {
         return Err(invalid("ambiguous HTTP body framing"));
     }
@@ -221,6 +232,37 @@ pub fn read_head<'a, R: BufRead>(reader: &mut R, output: &'a mut [u8]) -> io::Re
         }
     }
     Ok(head)
+}
+
+/// Read a final response while skipping at most `max_informational` 1xx heads.
+/// Protocol upgrades are unsupported. Configure a read deadline on the stream;
+/// this count bounds interim-message work but does not replace a time limit.
+pub fn read_response_head<'a, R: BufRead>(
+    reader: &mut R,
+    output: &'a mut [u8],
+    max_informational: usize,
+) -> io::Result<Head<'a>> {
+    let mut informational = 0usize;
+    let used = loop {
+        let head = read_head(reader, output)?;
+        let status = head
+            .status()
+            .ok_or_else(|| invalid("expected HTTP response"))?;
+        if status >= 200 {
+            break head.raw.len();
+        }
+        if status == 101 {
+            return Err(invalid("HTTP protocol upgrades are unsupported"));
+        }
+        if informational >= max_informational {
+            return Err(invalid("too many informational HTTP responses"));
+        }
+        informational += 1;
+    };
+    // Reborrow only after the loop, so no previous iteration retains the buffer.
+    let raw = core::str::from_utf8(&output[..used])
+        .map_err(|_| invalid("HTTP head is not UTF-8"))?;
+    parse_head(raw)
 }
 
 #[derive(Clone, Copy, Debug)]

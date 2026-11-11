@@ -23,12 +23,14 @@ jobs:
         run: cargo +1.99.1 test --locked --all-targets --all-features
       - name: Independent HTTP interoperability
         run: python scripts/http_smoke.py
+      - name: Exercise explicit extensions example
+        run: cargo +1.99.1 run --locked --example mcp_extensions
       - name: Verify allocation-free default core
         run: cargo +1.99.1 test --locked --no-default-features
       - name: Lint adapters
         run: cargo +1.99.1 clippy --locked --all-targets --all-features -- -D warnings
-      - name: Measure transport primitives (release, smoke samples)
-        run: cargo +1.99.1 bench --locked --bench transport
+      - name: Measure transport primitives (release, 501 samples)
+        run: env -u ZMCPIO_BENCH_SMOKE cargo +1.99.1 bench --locked --bench transport
       - name: Formatting
         if: always()
         run: |

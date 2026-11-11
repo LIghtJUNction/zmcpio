@@ -38,9 +38,12 @@ jobs:
       - run: cargo run --locked --example custom_transport
       - run: python scripts/stdio_smoke.py
       - run: python scripts/client_smoke.py
+      - run: python scripts/http_smoke.py
+      - run: cargo run --locked --example mcp_extensions
       - run: python scripts/test_release.py
       - run: python scripts/audit.py
       - run: cargo bench --locked --bench core
+      - run: cargo bench --locked --bench transport
       - name: WASM
         if: matrix.os == 'ubuntu-latest'
         run: |

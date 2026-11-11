@@ -7,6 +7,7 @@ use std::{
     time::Duration,
 };
 use zmcpio::{
+    ErrorKind,
     client::{Client, ClientState, Event, Pending},
     http::Header,
     http_io::{self, BodyReader, ChunkWriter, Connection},
@@ -15,20 +16,21 @@ use zmcpio::{
     mcp::{Action, Era, LegacyState, Notice, Server},
     sse,
     tools::{Content, ToolResult},
-    ErrorKind,
 };
 
 fn socket_pair(listener: &TcpListener) -> (TcpStream, TcpStream) {
-    let client = TcpStream::connect_timeout(
-        &listener.local_addr().unwrap(),
-        Duration::from_secs(5),
-    )
-    .unwrap();
+    let client =
+        TcpStream::connect_timeout(&listener.local_addr().unwrap(), Duration::from_secs(5))
+            .unwrap();
     // connect_timeout succeeded before accept: there is already a queued peer.
     let (server, _) = listener.accept().unwrap();
     for socket in [&client, &server] {
-        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-        socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        socket
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
         socket.set_nodelay(true).unwrap();
     }
     (client, server)
@@ -114,7 +116,11 @@ fn post(
             value: "application/json",
         }],
         body,
-        if last { Connection::Close } else { Connection::KeepAlive },
+        if last {
+            Connection::Close
+        } else {
+            Connection::KeepAlive
+        },
     )
     .unwrap();
     let mut storage = [0; 2048];
@@ -208,7 +214,11 @@ fn legacy_roundtrip(duplicate_tool_reply: bool) {
                 202,
                 &[],
                 b"",
-                if index == 2 { Connection::Close } else { Connection::KeepAlive },
+                if index == 2 {
+                    Connection::Close
+                } else {
+                    Connection::KeepAlive
+                },
             )
             .unwrap();
             if let Some(len) = reply {
@@ -245,8 +255,7 @@ fn legacy_roundtrip(duplicate_tool_reply: bool) {
     let mut data = [0; 4096];
     let mut event_name = [0; 64];
     let mut event_id = [0; 64];
-    let mut decoder =
-        sse::Decoder::new(&mut line, &mut data, &mut event_name, &mut event_id, 8192);
+    let mut decoder = sse::Decoder::new(&mut line, &mut data, &mut event_name, &mut event_id, 8192);
     let mut target = [0; 512];
     let mut session = Session::new(&base_url, &mut target).unwrap();
     let mut message = [0; 4096];
@@ -261,17 +270,29 @@ fn legacy_roundtrip(duplicate_tool_reply: bool) {
     let mut client = Client::new("legacy-network-client", "1", Era::Legacy, &mut pending);
     let mut outgoing = [0; 4096];
     let mut tokens = [Token::EMPTY; 256];
-    let initialize = client.initialize_with_version("2024-11-05", &mut outgoing).unwrap();
-    post(&mut client_post, &mut post_reader, &session, &outgoing[..initialize.len], false);
-    assert_eq!(client.state(), ClientState::Initializing, "HTTP 202 is not an MCP reply");
+    let initialize = client
+        .initialize_with_version("2024-11-05", &mut outgoing)
+        .unwrap();
+    post(
+        &mut client_post,
+        &mut post_reader,
+        &session,
+        &outgoing[..initialize.len],
+        false,
+    );
+    assert_eq!(
+        client.state(),
+        ClientState::Initializing,
+        "HTTP 202 is not an MCP reply"
+    );
     assert_eq!(client.pending_count(), 1);
-    let Received::Message(len) =
-        next_event(&mut body, &mut decoder, &mut session, &mut message)
+    let Received::Message(len) = next_event(&mut body, &mut decoder, &mut session, &mut message)
     else {
         panic!("missing legacy initialize reply on GET stream");
     };
-    let Event::Initialized { id, .. } =
-        client.receive(&message[..len], &mut tokens, Limits::default()).unwrap()
+    let Event::Initialized { id, .. } = client
+        .receive(&message[..len], &mut tokens, Limits::default())
+        .unwrap()
     else {
         panic!("expected negotiated legacy initialization");
     };
@@ -280,26 +301,46 @@ fn legacy_roundtrip(duplicate_tool_reply: bool) {
     assert_eq!(client.state(), ClientState::AwaitInitialized);
 
     let len = client.initialized(&mut outgoing).unwrap();
-    post(&mut client_post, &mut post_reader, &session, &outgoing[..len], false);
+    post(
+        &mut client_post,
+        &mut post_reader,
+        &session,
+        &outgoing[..len],
+        false,
+    );
     assert_eq!(client.state(), ClientState::Ready);
     assert_eq!(client.pending_count(), 0);
 
     let call = client.call_tool("echo", None, &mut outgoing).unwrap();
-    post(&mut client_post, &mut post_reader, &session, &outgoing[..call.len], true);
-    assert_eq!(client.pending_count(), 1, "POST acceptance cannot complete the call");
-    let Received::Message(len) =
-        next_event(&mut body, &mut decoder, &mut session, &mut message)
+    post(
+        &mut client_post,
+        &mut post_reader,
+        &session,
+        &outgoing[..call.len],
+        true,
+    );
+    assert_eq!(
+        client.pending_count(),
+        1,
+        "POST acceptance cannot complete the call"
+    );
+    let Received::Message(len) = next_event(&mut body, &mut decoder, &mut session, &mut message)
     else {
         panic!("missing tool result on GET stream");
     };
-    let Event::ToolResult { id, result } =
-        client.receive(&message[..len], &mut tokens, Limits::default()).unwrap()
+    let Event::ToolResult { id, result } = client
+        .receive(&message[..len], &mut tokens, Limits::default())
+        .unwrap()
     else {
         panic!("expected legacy tool result");
     };
     assert_eq!(id, call.id);
     assert!(!result.is_error());
-    assert!(core::str::from_utf8(&message[..len]).unwrap().contains("legacy-wire-ok"));
+    assert!(
+        core::str::from_utf8(&message[..len])
+            .unwrap()
+            .contains("legacy-wire-ok")
+    );
     assert_eq!(client.pending_count(), 0);
 
     if duplicate_tool_reply {
@@ -308,7 +349,9 @@ fn legacy_roundtrip(duplicate_tool_reply: bool) {
         else {
             panic!("missing deliberately duplicated SSE reply");
         };
-        let error = client.receive(&message[..len], &mut tokens, Limits::default()).unwrap_err();
+        let error = client
+            .receive(&message[..len], &mut tokens, Limits::default())
+            .unwrap_err();
         assert_eq!(error.kind, ErrorKind::UnknownId);
         assert_eq!(client.pending_count(), 0);
     }
@@ -316,7 +359,11 @@ fn legacy_roundtrip(duplicate_tool_reply: bool) {
         next_event(&mut body, &mut decoder, &mut session, &mut message),
         Received::End
     );
-    assert_eq!(server.join().unwrap(), (3, 1), "three POSTs, exactly one tool execution");
+    assert_eq!(
+        server.join().unwrap(),
+        (3, 1),
+        "three POSTs, exactly one tool execution"
+    );
 }
 
 #[test]

@@ -94,10 +94,7 @@ fn sse_framing() {
         });
         let wire_len = sse::write_event(event, &mut output).unwrap();
         let wire = &output[..wire_len];
-        for (name, chunk_size) in [
-            ("sse_decode_whole", wire_len),
-            ("sse_decode_chunks_17", 17),
-        ] {
+        for (name, chunk_size) in [("sse_decode_whole", wire_len), ("sse_decode_chunks_17", 17)] {
             decode_case(name, wire, payload.len(), chunk_size);
         }
         if size == 256 {
@@ -139,8 +136,16 @@ const UNICODE_CALL: &[u8] = r#"{"jsonrpc":"2.0","id":1,"method":"tools/call","pa
 
 fn modern_headers() {
     for (label, raw, name) in [
-        ("modern_headers_validate_ascii_preparsed", ASCII_CALL, "echo"),
-        ("modern_headers_validate_unicode_preparsed", UNICODE_CALL, "天气"),
+        (
+            "modern_headers_validate_ascii_preparsed",
+            ASCII_CALL,
+            "echo",
+        ),
+        (
+            "modern_headers_validate_unicode_preparsed",
+            UNICODE_CALL,
+            "天气",
+        ),
     ] {
         let mut tokens = [Token::EMPTY; 128];
         let document = Document::parse(raw, &mut tokens, Limits::default()).unwrap();
@@ -150,11 +155,26 @@ fn modern_headers() {
         let mut encoded = [0; 256];
         let encoded_name = http::encode_header_value(name, &mut encoded).unwrap();
         let headers = [
-            Header { name: "Content-Type", value: http::JSON },
-            Header { name: "Accept", value: http::ACCEPT },
-            Header { name: "MCP-Protocol-Version", value: "2026-07-28" },
-            Header { name: "Mcp-Method", value: "tools/call" },
-            Header { name: "Mcp-Name", value: encoded_name },
+            Header {
+                name: "Content-Type",
+                value: http::JSON,
+            },
+            Header {
+                name: "Accept",
+                value: http::ACCEPT,
+            },
+            Header {
+                name: "MCP-Protocol-Version",
+                value: "2026-07-28",
+            },
+            Header {
+                name: "Mcp-Method",
+                value: "tools/call",
+            },
+            Header {
+                name: "Mcp-Name",
+                value: encoded_name,
+            },
         ];
         let mut scratch = [0; 256];
         let workspace = 128 * std::mem::size_of::<Token>()
@@ -164,25 +184,26 @@ fn modern_headers() {
             + std::mem::size_of_val(&request)
             + std::mem::size_of_val(&document);
         measure(label, raw.len(), workspace, || {
-            http::validate_standard_headers(
-                black_box(&headers),
-                black_box(request),
-                &mut scratch,
-            )
-            .unwrap();
+            http::validate_standard_headers(black_box(&headers), black_box(request), &mut scratch)
+                .unwrap();
             black_box(&scratch);
         });
     }
 }
 
 const SCHEMA: &[u8] = br#"{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"},"nested":{"type":"object","properties":{"count":{"type":"integer","x-mcp-header":"Count"},"ok":{"type":["boolean","null"],"x-mcp-header":"OK"}}},"nullable":{"type":["string","null"],"x-mcp-header":"Nil"}}}"#;
-const ARGUMENTS: &[u8] = r#"{"region":" 你好\nwest ","nested":{"count":4.2e1,"ok":true},"nullable":null}"#.as_bytes();
+const ARGUMENTS: &[u8] =
+    r#"{"region":" 你好\nwest ","nested":{"count":4.2e1,"ok":true},"nullable":null}"#.as_bytes();
 
 fn custom_parameter_headers() {
     let mut schema_tokens = [Token::EMPTY; 128];
     let mut argument_tokens = [Token::EMPTY; 64];
-    let schema = Document::parse(SCHEMA, &mut schema_tokens, Limits::default()).unwrap().root();
-    let arguments = Document::parse(ARGUMENTS, &mut argument_tokens, Limits::default()).unwrap().root();
+    let schema = Document::parse(SCHEMA, &mut schema_tokens, Limits::default())
+        .unwrap()
+        .root();
+    let arguments = Document::parse(ARGUMENTS, &mut argument_tokens, Limits::default())
+        .unwrap()
+        .root();
     let mut slots = [Parameter::EMPTY; 8];
     let mut output = [0; 512];
     let mut scratch = [0; 256];
@@ -195,26 +216,30 @@ fn custom_parameter_headers() {
     {
         let parameters = http::parameters(schema, Some(arguments), &mut slots).unwrap();
         assert_eq!(parameters.len(), 4);
-        measure("custom_parameter_encode_preextracted", ARGUMENTS.len(), workspace, || {
-            let len = http::write_parameter_headers(
-                black_box(parameters),
-                &mut output,
-                &mut scratch,
-            )
-            .unwrap();
-            black_box(&output[..len]);
-        });
+        measure(
+            "custom_parameter_encode_preextracted",
+            ARGUMENTS.len(),
+            workspace,
+            || {
+                let len =
+                    http::write_parameter_headers(black_box(parameters), &mut output, &mut scratch)
+                        .unwrap();
+                black_box(&output[..len]);
+            },
+        );
     }
-    measure("custom_parameter_extract_encode_preparsed", SCHEMA.len() + ARGUMENTS.len(), workspace, || {
-        let parameters = http::parameters(
-            black_box(schema),
-            Some(black_box(arguments)),
-            &mut slots,
-        )
-        .unwrap();
-        let len = http::write_parameter_headers(parameters, &mut output, &mut scratch).unwrap();
-        black_box(&output[..len]);
-    });
+    measure(
+        "custom_parameter_extract_encode_preparsed",
+        SCHEMA.len() + ARGUMENTS.len(),
+        workspace,
+        || {
+            let parameters =
+                http::parameters(black_box(schema), Some(black_box(arguments)), &mut slots)
+                    .unwrap();
+            let len = http::write_parameter_headers(parameters, &mut output, &mut scratch).unwrap();
+            black_box(&output[..len]);
+        },
+    );
 }
 
 fn main() {
