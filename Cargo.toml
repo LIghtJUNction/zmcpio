@@ -1,0 +1,34 @@
+[package]
+name = "zmcp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99.1"
+description = "Bounded, allocation-free, transport-independent MCP protocol primitives"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/LIghtJUNction/zmcp"
+readme = "README.md"
+keywords = ["mcp", "json-rpc", "no-std", "sans-io"]
+categories = ["no-std", "parser-implementations"]
+include = ["src/**", "tests/**", "examples/**", "benches/**", "README.md", "CHANGELOG.md", "LICENSE-*", "Cargo.toml", "Cargo.lock", "docs/**"]
+
+[features]
+default = []
+std = []
+
+[dependencies]
+
+[dev-dependencies]
+
+[build-dependencies]
+
+[workspace]
+members = ["."]
+exclude = ["comparison"]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+
+[profile.bench]
+lto = "thin"
+codegen-units = 1
