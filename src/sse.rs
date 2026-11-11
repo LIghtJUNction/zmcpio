@@ -133,13 +133,22 @@ impl<'a> Decoder<'a> {
     /// never consumes bytes from the following block.
     pub fn feed(&mut self, input: &[u8]) -> Step {
         if let Some(error) = self.failed {
-            return Step { consumed: 0, status: Status::Error(error) };
+            return Step {
+                consumed: 0,
+                status: Status::Error(error),
+            };
         }
         if self.closed {
-            return Step { consumed: 0, status: Status::Error(Error::Closed) };
+            return Step {
+                consumed: 0,
+                status: Status::Error(Error::Closed),
+            };
         }
         if self.ready {
-            return Step { consumed: 0, status: Status::Ready };
+            return Step {
+                consumed: 0,
+                status: Status::Ready,
+            };
         }
         for (at, byte) in input.iter().copied().enumerate() {
             if self.skip_lf {
@@ -149,9 +158,14 @@ impl<'a> Decoder<'a> {
                 }
             }
             if self.block_bytes >= self.max_block_bytes {
-                let error = Error::BlockTooLarge { limit: self.max_block_bytes };
+                let error = Error::BlockTooLarge {
+                    limit: self.max_block_bytes,
+                };
                 self.failed = Some(error);
-                return Step { consumed: at, status: Status::Error(error) };
+                return Step {
+                    consumed: at,
+                    status: Status::Error(error),
+                };
             }
             if byte == b'\r' || byte == b'\n' {
                 let blank_line = self.line_len == 0
@@ -166,7 +180,10 @@ impl<'a> Decoder<'a> {
                         self.skip_lf = byte == b'\r';
                         if self.ready {
                             self.block_bytes = 0;
-                            return Step { consumed: at + 1, status: Status::Ready };
+                            return Step {
+                                consumed: at + 1,
+                                status: Status::Ready,
+                            };
                         }
                         // Empty/comment-only blocks still establish boundaries.
                         if blank_line {
@@ -174,7 +191,10 @@ impl<'a> Decoder<'a> {
                         }
                     }
                     Err(status) => {
-                        return Step { consumed: at, status };
+                        return Step {
+                            consumed: at,
+                            status,
+                        };
                     }
                 }
             } else {
@@ -192,7 +212,10 @@ impl<'a> Decoder<'a> {
                 self.block_bytes += 1;
             }
         }
-        Step { consumed: input.len(), status: Status::NeedInput }
+        Step {
+            consumed: input.len(),
+            status: Status::NeedInput,
+        }
     }
 
     fn process_line(&mut self) -> Result<(), Status> {
@@ -219,7 +242,8 @@ impl<'a> Decoder<'a> {
         match field {
             b"data" => {
                 let separator = usize::from(self.has_data);
-                let needed = self.data_len
+                let needed = self
+                    .data_len
                     .saturating_add(separator)
                     .saturating_add(replaced_len(value));
                 need_capacity(Buffer::Data, needed, self.data.len())?;
@@ -267,10 +291,8 @@ impl<'a> Decoder<'a> {
             return None;
         }
         // replace_utf8 only writes valid UTF-8.
-        let event = core::str::from_utf8(&self.event_name[..self.event_len])
-            .unwrap_or_default();
-        let id = core::str::from_utf8(&self.event_id[..self.id_len])
-            .unwrap_or_default();
+        let event = core::str::from_utf8(&self.event_name[..self.event_len]).unwrap_or_default();
+        let id = core::str::from_utf8(&self.event_id[..self.id_len]).unwrap_or_default();
         Some(Event {
             data: self.has_data.then_some(&self.data[..self.data_len]),
             event: if event.is_empty() { "message" } else { event },
@@ -308,7 +330,10 @@ impl<'a> Decoder<'a> {
             Buffer::Output => return Err(Error::InvalidField),
         };
         if storage.len() < used {
-            return Err(Error::Capacity { buffer, needed: used });
+            return Err(Error::Capacity {
+                buffer,
+                needed: used,
+            });
         }
         storage[..used].copy_from_slice(&old[..used]);
         *old = storage;
@@ -343,8 +368,11 @@ impl<'a> Decoder<'a> {
     }
 
     pub fn memory_bytes(&self) -> usize {
-        core::mem::size_of::<Self>() + self.line.len() + self.data.len()
-            + self.event_name.len() + self.event_id.len()
+        core::mem::size_of::<Self>()
+            + self.line.len()
+            + self.data.len()
+            + self.event_name.len()
+            + self.event_id.len()
     }
 }
 
@@ -396,7 +424,9 @@ fn replace_utf8(mut input: &[u8], output: &mut [u8]) -> usize {
 }
 
 fn valid_field(value: &str, reject_nul: bool) -> bool {
-    !value.bytes().any(|byte| byte == b'\r' || byte == b'\n' || (reject_nul && byte == 0))
+    !value
+        .bytes()
+        .any(|byte| byte == b'\r' || byte == b'\n' || (reject_nul && byte == 0))
 }
 
 fn decimal(mut number: u64, storage: &mut [u8; 20]) -> &[u8] {
@@ -412,7 +442,9 @@ fn decimal(mut number: u64, storage: &mut [u8; 20]) -> &[u8] {
 }
 
 fn add_size(size: &mut usize, extra: usize) -> Result<(), Error> {
-    *size = size.checked_add(extra).ok_or(Error::BlockTooLarge { limit: usize::MAX })?;
+    *size = size
+        .checked_add(extra)
+        .ok_or(Error::BlockTooLarge { limit: usize::MAX })?;
     Ok(())
 }
 
@@ -458,7 +490,10 @@ pub fn write_event(event: Event<'_>, output: &mut [u8]) -> Result<usize, Error> 
         }
     }
     if output.len() < needed {
-        return Err(Error::Capacity { buffer: Buffer::Output, needed });
+        return Err(Error::Capacity {
+            buffer: Buffer::Output,
+            needed,
+        });
     }
     let mut at = 0;
     if let Some(id) = event.id {
@@ -500,7 +535,10 @@ pub fn write_comment(comment: &str, output: &mut [u8]) -> Result<usize, Error> {
         add_size(&mut needed, line.len())?;
     }
     if output.len() < needed {
-        return Err(Error::Capacity { buffer: Buffer::Output, needed });
+        return Err(Error::Capacity {
+            buffer: Buffer::Output,
+            needed,
+        });
     }
     let mut at = 0;
     for line in comment.split('\n') {

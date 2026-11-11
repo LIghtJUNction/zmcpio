@@ -575,7 +575,8 @@ impl<'a> Client<'a> {
         }
         w.raw(b"}}");
         let len = w.finish()?;
-        let progress = meta.and_then(|value| value.get("progressToken"))
+        let progress = meta
+            .and_then(|value| value.get("progressToken"))
             .is_some_and(|value| value.integer().ok() == Some(id));
         let operation = if method == Method::ToolsCall {
             Operation::CallTool
@@ -717,7 +718,10 @@ impl<'a> Client<'a> {
                                 meta.require("io.modelcontextprotocol/subscriptionId")?,
                             )?;
                             if !subscription_id.equals(Id::Number(id)) {
-                                return Err(Error::new(ErrorKind::UnexpectedResponse, result.offset()));
+                                return Err(Error::new(
+                                    ErrorKind::UnexpectedResponse,
+                                    result.offset(),
+                                ));
                             }
                         }
                         Event::ExtensionResult { id, method, result }
@@ -831,7 +835,10 @@ impl<'a> Client<'a> {
         w.raw(b"}");
     }
     fn write_client_capabilities(&self, w: &mut Writer<'_>) {
-        w.raw(self.client_capabilities.map_or(b"{}", |value| value.raw().as_bytes()));
+        w.raw(
+            self.client_capabilities
+                .map_or(b"{}", |value| value.raw().as_bytes()),
+        );
     }
     fn notice(&mut self, n: Notification<'_>) -> Result<(), Error> {
         if !n.method.matches("notifications/progress") {

@@ -52,10 +52,19 @@ fn every_chunk_boundary_preserves_multiline_unicode_and_crlf() {
             id: Some("abc".into()),
             retry_ms: Some(15),
         },
-        Owned { data: Some(vec![]), event: "message".into(), id: None, retry_ms: None },
+        Owned {
+            data: Some(vec![]),
+            event: "message".into(),
+            id: None,
+            retry_ms: None,
+        },
     ];
     for split in 0..=wire.len() {
-        assert_eq!(decode([&wire[..split], &wire[split..]]), expected, "split {split}");
+        assert_eq!(
+            decode([&wire[..split], &wire[split..]]),
+            expected,
+            "split {split}"
+        );
     }
     for size in 1..=wire.len() {
         assert_eq!(decode(wire.chunks(size)), expected, "chunk size {size}");
@@ -112,7 +121,8 @@ fn metadata_only_blocks_and_empty_ids_are_not_lost() {
 
 #[test]
 fn only_one_optional_space_is_removed_and_fields_are_case_sensitive() {
-    let wire = b": comment\nunknown: ignored\nDATA: ignored\ndata:  leading\nDATA: ignored\ndata\n\n";
+    let wire =
+        b": comment\nunknown: ignored\nDATA: ignored\ndata:  leading\nDATA: ignored\ndata\n\n";
     let result = decode([wire.as_slice()]);
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].data.as_deref(), Some(b" leading\n".as_slice()));
@@ -127,7 +137,10 @@ fn empty_and_colonless_data_dispatch_empty_payloads() {
 
 #[test]
 fn later_fields_replace_names_and_ids_but_null_id_is_ignored() {
-    let result = decode([b"event: old\nevent: new\nid: first\nid: next\nid: \0bad\ndata: x\n\ndata: y\n\n".as_slice()]);
+    let result = decode([
+        b"event: old\nevent: new\nid: first\nid: next\nid: \0bad\ndata: x\n\ndata: y\n\n"
+            .as_slice(),
+    ]);
     assert_eq!(result[0].event, "new");
     assert_eq!(result[0].id.as_deref(), Some("next"));
     assert_eq!(result[1].event, "message");
@@ -182,7 +195,10 @@ fn partial_eof_discards_data_and_id_but_exposes_complete_retry_hint() {
     let mut name = [0; 16];
     let mut id = [0; 16];
     let mut d = Decoder::new(&mut line, &mut data, &mut name, &mut id, 256);
-    assert_eq!(d.feed(b"id: uncommitted\nretry: 7\ndata: partial\n").status, Status::NeedInput);
+    assert_eq!(
+        d.feed(b"id: uncommitted\nretry: 7\ndata: partial\n").status,
+        Status::NeedInput
+    );
     assert_eq!(d.retry_hint(), Some(7));
     assert_eq!(d.event(), None);
     d.consume(); // Does not discard partial state.
@@ -198,7 +214,12 @@ fn partial_eof_discards_data_and_id_but_exposes_complete_retry_hint() {
 
 #[test]
 fn eof_without_blank_line_never_dispatches() {
-    for wire in [b"data: x".as_slice(), b"data: x\n", b"data: x\r\n", b"\xef\xbb"] {
+    for wire in [
+        b"data: x".as_slice(),
+        b"data: x\n",
+        b"data: x\r\n",
+        b"\xef\xbb",
+    ] {
         assert!(decode(wire.chunks(1)).is_empty());
     }
 }
@@ -213,7 +234,13 @@ fn data_capacity_retry_preserves_line_and_reports_exact_needed_bytes() {
     let mut d = Decoder::new(&mut line, &mut small, &mut name, &mut id, 256);
     let wire = b"data: hello\n\n";
     let step = d.feed(wire);
-    assert_eq!(step.status, Status::NeedCapacity { buffer: Buffer::Data, needed: 5 });
+    assert_eq!(
+        step.status,
+        Status::NeedCapacity {
+            buffer: Buffer::Data,
+            needed: 5
+        }
+    );
     assert_eq!(&wire[step.consumed..], b"\n\n");
     d.replace_buffer(Buffer::Data, &mut large).unwrap();
     assert_eq!(d.feed(&wire[step.consumed..]).status, Status::Ready);
@@ -232,10 +259,19 @@ fn line_growth_is_recoverable_and_failed_replacement_is_atomic() {
     let wire = b"data: 123\n\n";
     let step = d.feed(wire);
     assert_eq!(step.consumed, 2);
-    assert_eq!(step.status, Status::NeedCapacity { buffer: Buffer::Line, needed: 3 });
+    assert_eq!(
+        step.status,
+        Status::NeedCapacity {
+            buffer: Buffer::Line,
+            needed: 3
+        }
+    );
     assert_eq!(
         d.replace_buffer(Buffer::Line, &mut too_small),
-        Err(Error::Capacity { buffer: Buffer::Line, needed: 2 })
+        Err(Error::Capacity {
+            buffer: Buffer::Line,
+            needed: 2
+        })
     );
     d.replace_buffer(Buffer::Line, &mut large).unwrap();
     assert_eq!(d.feed(&wire[step.consumed..]).status, Status::Ready);
@@ -253,11 +289,23 @@ fn event_name_and_id_can_grow_independently() {
     let mut d = Decoder::new(&mut line, &mut data, &mut small_name, &mut small_id, 256);
     let wire = b"event: custom\nid: session\ndata: {}\n\n";
     let step = d.feed(wire);
-    assert_eq!(step.status, Status::NeedCapacity { buffer: Buffer::Event, needed: 6 });
+    assert_eq!(
+        step.status,
+        Status::NeedCapacity {
+            buffer: Buffer::Event,
+            needed: 6
+        }
+    );
     let mut at = step.consumed;
     d.replace_buffer(Buffer::Event, &mut name).unwrap();
     let step = d.feed(&wire[at..]);
-    assert_eq!(step.status, Status::NeedCapacity { buffer: Buffer::Id, needed: 7 });
+    assert_eq!(
+        step.status,
+        Status::NeedCapacity {
+            buffer: Buffer::Id,
+            needed: 7
+        }
+    );
     at += step.consumed;
     d.replace_buffer(Buffer::Id, &mut id).unwrap();
     assert_eq!(d.feed(&wire[at..]).status, Status::Ready);
@@ -275,13 +323,19 @@ fn utf8_replacement_capacity_accounts_for_expansion() {
     let mut d = Decoder::new(&mut line, &mut data, &mut name, &mut id, 64);
     assert_eq!(
         d.feed(b"data: \xff\xff\n\n").status,
-        Status::NeedCapacity { buffer: Buffer::Data, needed: 6 }
+        Status::NeedCapacity {
+            buffer: Buffer::Data,
+            needed: 6
+        }
     );
 }
 
 #[test]
 fn cumulative_block_limit_counts_ignored_and_comment_lines() {
-    for wire in [b":1234\n:1234\n:1234\n:1234\n".as_slice(), b"x:123\nx:123\nx:123\nx:123\n"] {
+    for wire in [
+        b":1234\n:1234\n:1234\n:1234\n".as_slice(),
+        b"x:123\nx:123\nx:123\nx:123\n",
+    ] {
         let mut line = [0; 32];
         let mut data = [0; 32];
         let mut name = [0; 4];
@@ -289,7 +343,10 @@ fn cumulative_block_limit_counts_ignored_and_comment_lines() {
         let mut d = Decoder::new(&mut line, &mut data, &mut name, &mut id, 19);
         let step = d.feed(wire);
         assert_eq!(step.consumed, 19);
-        assert_eq!(step.status, Status::Error(Error::BlockTooLarge { limit: 19 }));
+        assert_eq!(
+            step.status,
+            Status::Error(Error::BlockTooLarge { limit: 19 })
+        );
         assert_eq!(d.feed(b"\n").consumed, 0);
         assert_eq!(d.finish(), Err(Error::BlockTooLarge { limit: 19 }));
         d.reset();
@@ -325,9 +382,15 @@ fn zero_payload_buffers_support_explicit_empty_fields() {
     let mut id = [];
     let mut d = Decoder::new(&mut line, &mut data, &mut name, &mut id, 64);
     assert_eq!(d.feed(b"event:\nid:\ndata:\n\n").status, Status::Ready);
-    assert_eq!(d.event().unwrap(), Event {
-        data: Some(&[]), event: "message", id: Some(""), retry_ms: None,
-    });
+    assert_eq!(
+        d.event().unwrap(),
+        Event {
+            data: Some(&[]),
+            event: "message",
+            id: Some(""),
+            retry_ms: None,
+        }
+    );
 }
 
 #[test]
@@ -347,8 +410,18 @@ fn encoder_round_trips_multiline_data_without_field_injection() {
 #[test]
 fn encoder_handles_empty_payload_and_metadata_only_blocks() {
     for event in [
-        Event { data: Some(&[]), event: "message", id: None, retry_ms: None },
-        Event { data: None, event: "message", id: Some(""), retry_ms: Some(0) },
+        Event {
+            data: Some(&[]),
+            event: "message",
+            id: None,
+            retry_ms: None,
+        },
+        Event {
+            data: None,
+            event: "message",
+            id: Some(""),
+            retry_ms: Some(0),
+        },
     ] {
         let mut output = [0; 64];
         let len = sse::write_event(event, &mut output).unwrap();
@@ -358,15 +431,41 @@ fn encoder_handles_empty_payload_and_metadata_only_blocks() {
 
 #[test]
 fn encoder_rejects_injection_and_invalid_utf8_before_mutating_output() {
-    let base = Event { data: Some(b"{}"), event: "message", id: None, retry_ms: None };
+    let base = Event {
+        data: Some(b"{}"),
+        event: "message",
+        id: None,
+        retry_ms: None,
+    };
     for event in [
-        Event { event: "message\nid: evil", ..base },
-        Event { event: "message\rdata: bad", ..base },
-        Event { id: Some("id\nbad"), ..base },
-        Event { id: Some("id\r"), ..base },
-        Event { id: Some("id\0"), ..base },
-        Event { data: Some(b"first\rdata: bad"), ..base },
-        Event { data: Some(&[0xff]), ..base },
+        Event {
+            event: "message\nid: evil",
+            ..base
+        },
+        Event {
+            event: "message\rdata: bad",
+            ..base
+        },
+        Event {
+            id: Some("id\nbad"),
+            ..base
+        },
+        Event {
+            id: Some("id\r"),
+            ..base
+        },
+        Event {
+            id: Some("id\0"),
+            ..base
+        },
+        Event {
+            data: Some(b"first\rdata: bad"),
+            ..base
+        },
+        Event {
+            data: Some(&[0xff]),
+            ..base
+        },
     ] {
         let mut output = [0xa5; 64];
         assert!(sse::write_event(event, &mut output).is_err());
@@ -376,10 +475,18 @@ fn encoder_rejects_injection_and_invalid_utf8_before_mutating_output() {
 
 #[test]
 fn encoder_capacity_failure_is_atomic_and_exact() {
-    let event = Event { data: Some(b"{}\n"), event: "notify", id: Some("42"), retry_ms: Some(15) };
+    let event = Event {
+        data: Some(b"{}\n"),
+        event: "notify",
+        id: Some("42"),
+        retry_ms: Some(15),
+    };
     let mut tiny = [0xa5; 3];
     let needed = match sse::write_event(event, &mut tiny) {
-        Err(Error::Capacity { buffer: Buffer::Output, needed }) => needed,
+        Err(Error::Capacity {
+            buffer: Buffer::Output,
+            needed,
+        }) => needed,
         other => panic!("unexpected: {other:?}"),
     };
     assert_eq!(tiny, [0xa5; 3]);
@@ -394,7 +501,13 @@ fn heartbeat_comments_do_not_generate_messages() {
     let len = sse::write_comment("keepalive\ndata: not a message", &mut output).unwrap();
     assert!(decode(output[..len].chunks(1)).is_empty());
     let mut tiny = [0xa5; 1];
-    assert!(matches!(sse::write_comment("x", &mut tiny), Err(Error::Capacity { .. })));
+    assert!(matches!(
+        sse::write_comment("x", &mut tiny),
+        Err(Error::Capacity { .. })
+    ));
     assert_eq!(tiny, [0xa5; 1]);
-    assert_eq!(sse::write_comment("x\rdata: bad", &mut output), Err(Error::InvalidField));
+    assert_eq!(
+        sse::write_comment("x\rdata: bad", &mut output),
+        Err(Error::InvalidField)
+    );
 }

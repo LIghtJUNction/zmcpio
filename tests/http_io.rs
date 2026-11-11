@@ -6,7 +6,8 @@ use zmcpio::http_io::{self, BodyReader};
 
 #[test]
 fn fixed_body_does_not_consume_next_response() {
-    let bytes = b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Type: application/json\r\n\r\nabcNEXT";
+    let bytes =
+        b"HTTP/1.1 200 OK\r\nContent-Length: 3\r\nContent-Type: application/json\r\n\r\nabcNEXT";
     let mut reader = BufReader::with_capacity(1, Cursor::new(bytes));
     let mut storage = [0; 512];
     let head = http_io::read_head(&mut reader, &mut storage).unwrap();
@@ -50,16 +51,35 @@ fn reject_smuggling_and_header_injection() {
     ] {
         let mut reader = Cursor::new(bytes.as_bytes());
         let mut head = [0; 512];
-        assert!(http_io::read_head(&mut reader, &mut head).is_err(), "{bytes}");
+        assert!(
+            http_io::read_head(&mut reader, &mut head).is_err(),
+            "{bytes}"
+        );
     }
     for (host, target, headers) in [
         ("x\r\nBad: x", "/mcp", vec![]),
         ("x", "/a b", vec![]),
-        ("x", "/mcp", vec![Header { name: "X-Test", value: "x\r\nBad: x" }]),
-        ("x", "/mcp", vec![Header { name: "Content-Length", value: "9" }]),
+        (
+            "x",
+            "/mcp",
+            vec![Header {
+                name: "X-Test",
+                value: "x\r\nBad: x",
+            }],
+        ),
+        (
+            "x",
+            "/mcp",
+            vec![Header {
+                name: "Content-Length",
+                value: "9",
+            }],
+        ),
     ] {
         let mut output = Vec::new();
-        assert!(http_io::write_request(&mut output, "POST", target, host, &headers, b"{}").is_err());
+        assert!(
+            http_io::write_request(&mut output, "POST", target, host, &headers, b"{}").is_err()
+        );
         assert!(output.is_empty(), "validation must precede writes");
     }
 }
@@ -89,15 +109,29 @@ fn short_or_oversized_body_is_an_error() {
 #[test]
 fn request_and_response_roundtrip() {
     let mut output = Vec::new();
-    let headers = [Header { name: "Content-Type", value: "application/json" }];
-    http_io::write_request(&mut output, "POST", "/mcp?q=x", "localhost:8080", &headers, b"{}").unwrap();
+    let headers = [Header {
+        name: "Content-Type",
+        value: "application/json",
+    }];
+    http_io::write_request(
+        &mut output,
+        "POST",
+        "/mcp?q=x",
+        "localhost:8080",
+        &headers,
+        b"{}",
+    )
+    .unwrap();
     let mut reader = Cursor::new(output);
     let mut storage = [0; 512];
     let head = http_io::read_head(&mut reader, &mut storage).unwrap();
     assert_eq!(head.method(), Some("POST"));
     assert_eq!(head.target(), Some("/mcp?q=x"));
     assert_eq!(head.header("host"), Some("localhost:8080"));
-    let mut views = [Header { name: "", value: "" }; 8];
+    let mut views = [Header {
+        name: "",
+        value: "",
+    }; 8];
     assert_eq!(head.copy_headers(&mut views).unwrap(), 4);
     assert_eq!(head.copy_headers(&mut []), Err(4));
     let mut body = BodyReader::new(&mut reader, head, 8).unwrap();

@@ -38,6 +38,10 @@ harness = false
 name = "mcp_client"
 required-features = ["std"]
 
+[[example]]
+name = "mcp_http"
+required-features = ["std"]
+
 [profile.release]
 lto = "thin"
 codegen-units = 1

@@ -78,21 +78,33 @@ impl Method {
     }
 
     pub fn parse(name: JsonString<'_>) -> Option<Self> {
-        Self::ALL.into_iter().find(|method| name.matches(method.as_str()))
+        Self::ALL
+            .into_iter()
+            .find(|method| name.matches(method.as_str()))
     }
 
     pub const fn is_callback(self) -> bool {
-        matches!(self, Self::RootsList | Self::SamplingCreateMessage | Self::ElicitationCreate)
+        matches!(
+            self,
+            Self::RootsList | Self::SamplingCreateMessage | Self::ElicitationCreate
+        )
     }
 
     pub const fn supports_input(self) -> bool {
-        matches!(self, Self::ToolsCall | Self::ResourcesRead | Self::PromptsGet)
+        matches!(
+            self,
+            Self::ToolsCall | Self::ResourcesRead | Self::PromptsGet
+        )
     }
 
     pub const fn available(self, era: Era) -> bool {
         match self {
-            Self::ResourcesSubscribe | Self::ResourcesUnsubscribe | Self::LoggingSetLevel
-            | Self::RootsList | Self::SamplingCreateMessage | Self::ElicitationCreate => {
+            Self::ResourcesSubscribe
+            | Self::ResourcesUnsubscribe
+            | Self::LoggingSetLevel
+            | Self::RootsList
+            | Self::SamplingCreateMessage
+            | Self::ElicitationCreate => {
                 matches!(era, Era::Legacy)
             }
             Self::SubscriptionsListen => matches!(era, Era::Modern),
@@ -104,8 +116,10 @@ impl Method {
     /// or dispatch them after negotiating an older tools-compatible revision.
     pub fn available_at(self, era: Era, version: Option<&str>) -> bool {
         self.available(era)
-            && (!matches!(self, Self::TasksGet | Self::TasksResult | Self::TasksList | Self::TasksCancel)
-                || era == Era::Modern
+            && (!matches!(
+                self,
+                Self::TasksGet | Self::TasksResult | Self::TasksList | Self::TasksCancel
+            ) || era == Era::Modern
                 || version == Some(crate::mcp::LEGACY_PROTOCOL_VERSION))
     }
 
@@ -132,9 +146,14 @@ impl Method {
             }
         }
         match self {
-            Self::ResourcesList | Self::ResourcesTemplatesList | Self::PromptsList
+            Self::ResourcesList
+            | Self::ResourcesTemplatesList
+            | Self::PromptsList
             | Self::TasksList => {
-                params.and_then(|v| v.get("cursor")).map(string).transpose()?;
+                params
+                    .and_then(|v| v.get("cursor"))
+                    .map(string)
+                    .transpose()?;
             }
             Self::ResourcesRead | Self::ResourcesSubscribe | Self::ResourcesUnsubscribe => {
                 string(required(params, "uri")?)?;
@@ -152,7 +171,10 @@ impl Method {
                 if name.decoded_len() == 0 || name.decoded_len() > 128 {
                     return Err(Error::new(ErrorKind::InvalidParams, 0));
                 }
-                params.and_then(|v| v.get("arguments")).map(object).transpose()?;
+                params
+                    .and_then(|v| v.get("arguments"))
+                    .map(object)
+                    .transpose()?;
             }
             Self::CompletionComplete => {
                 let reference = object(required(params, "ref")?)?;
@@ -167,12 +189,25 @@ impl Method {
                 let argument = object(required(params, "argument")?)?;
                 string(argument.require("name")?)?;
                 string(argument.require("value")?)?;
-                params.and_then(|v| v.get("context")).map(object).transpose()?;
+                params
+                    .and_then(|v| v.get("context"))
+                    .map(object)
+                    .transpose()?;
             }
             Self::LoggingSetLevel => {
                 let level = string(required(params, "level")?)?;
-                if !["debug", "info", "notice", "warning", "error", "critical", "alert", "emergency"]
-                    .iter().any(|candidate| level.matches(candidate))
+                if ![
+                    "debug",
+                    "info",
+                    "notice",
+                    "warning",
+                    "error",
+                    "critical",
+                    "alert",
+                    "emergency",
+                ]
+                .iter()
+                .any(|candidate| level.matches(candidate))
                 {
                     return Err(Error::new(ErrorKind::InvalidParams, 0));
                 }
@@ -242,7 +277,9 @@ impl Method {
                     object(value)?;
                     string(value.require("uri")?)?;
                     match (value.get("text"), value.get("blob")) {
-                        (Some(content), None) | (None, Some(content)) => { string(content)?; }
+                        (Some(content), None) | (None, Some(content)) => {
+                            string(content)?;
+                        }
                         _ => return Err(invalid(value)),
                     }
                 }
@@ -279,7 +316,9 @@ impl Method {
                     return Err(invalid(more));
                 }
             }
-            Self::TasksList => { array(result.require("tasks")?)?; }
+            Self::TasksList => {
+                array(result.require("tasks")?)?;
+            }
             Self::RootsList => {
                 for root in array(result.require("roots")?)?.elements() {
                     object(root)?;
@@ -297,7 +336,14 @@ impl Method {
 /// Validate opt-in client capabilities. No capability is enabled by default.
 pub fn validate_client_capabilities(value: Value<'_>) -> Result<(), Error> {
     object(value)?;
-    for field in ["roots", "sampling", "elicitation", "experimental", "extensions", "tasks"] {
+    for field in [
+        "roots",
+        "sampling",
+        "elicitation",
+        "experimental",
+        "extensions",
+        "tasks",
+    ] {
         value.get(field).map(object).transpose()?;
     }
     Ok(())
@@ -341,12 +387,18 @@ fn validate_callback(
     params: Option<Value<'_>>,
     capabilities: Value<'_>,
 ) -> Result<(), Error> {
-    let name = method.callback_capability().ok_or(Error::new(ErrorKind::State, 0))?;
+    let name = method
+        .callback_capability()
+        .ok_or(Error::new(ErrorKind::State, 0))?;
     validate_client_capabilities(capabilities)?;
-    let capability = capabilities.get(name).ok_or(Error::new(ErrorKind::State, 0))?;
+    let capability = capabilities
+        .get(name)
+        .ok_or(Error::new(ErrorKind::State, 0))?;
     method.validate_params(params)?;
     if method == Method::ElicitationCreate
-        && params.and_then(|value| value.get("mode")).and_then(Value::string)
+        && params
+            .and_then(|value| value.get("mode"))
+            .and_then(Value::string)
             .is_some_and(|value| value.matches("url"))
         && capability.get("url").is_none()
     {
@@ -358,7 +410,9 @@ fn validate_callback(
         {
             return Err(Error::new(ErrorKind::State, capability.offset()));
         }
-        if params.and_then(|value| value.get("includeContext")).and_then(Value::string)
+        if params
+            .and_then(|value| value.get("includeContext"))
+            .and_then(Value::string)
             .is_some_and(|value| !value.matches("none"))
             && capability.get("context").is_none()
         {
@@ -374,16 +428,26 @@ pub(crate) fn write_key(w: &mut Writer<'_>, key: JsonString<'_>) {
 }
 
 pub(crate) fn object(value: Value<'_>) -> Result<Value<'_>, Error> {
-    if value.kind() == Kind::Object { Ok(value) } else { Err(invalid(value)) }
+    if value.kind() == Kind::Object {
+        Ok(value)
+    } else {
+        Err(invalid(value))
+    }
 }
 fn array(value: Value<'_>) -> Result<Value<'_>, Error> {
-    if value.kind() == Kind::Array { Ok(value) } else { Err(invalid(value)) }
+    if value.kind() == Kind::Array {
+        Ok(value)
+    } else {
+        Err(invalid(value))
+    }
 }
 fn string(value: Value<'_>) -> Result<JsonString<'_>, Error> {
     value.string().ok_or_else(|| invalid(value))
 }
 fn required<'a>(params: Option<Value<'a>>, field: &str) -> Result<Value<'a>, Error> {
-    params.ok_or(Error::new(ErrorKind::InvalidParams, 0))?.require(field)
+    params
+        .ok_or(Error::new(ErrorKind::InvalidParams, 0))?
+        .require(field)
 }
 fn invalid(value: Value<'_>) -> Error {
     Error::new(ErrorKind::InvalidParams, value.offset())
@@ -391,7 +455,11 @@ fn invalid(value: Value<'_>) -> Error {
 
 pub fn validate_filter(filter: Value<'_>) -> Result<(), Error> {
     object(filter)?;
-    for name in ["toolsListChanged", "promptsListChanged", "resourcesListChanged"] {
+    for name in [
+        "toolsListChanged",
+        "promptsListChanged",
+        "resourcesListChanged",
+    ] {
         if let Some(value) = filter.get(name)
             && value.boolean().is_none()
         {
@@ -407,7 +475,11 @@ pub fn validate_filter(filter: Value<'_>) -> Result<(), Error> {
 }
 
 fn filter_subset(subset: Value<'_>, superset: Value<'_>) -> bool {
-    for name in ["toolsListChanged", "promptsListChanged", "resourcesListChanged"] {
+    for name in [
+        "toolsListChanged",
+        "promptsListChanged",
+        "resourcesListChanged",
+    ] {
         if subset.get(name).and_then(Value::boolean) == Some(true)
             && superset.get(name).and_then(Value::boolean) != Some(true)
         {
@@ -416,9 +488,13 @@ fn filter_subset(subset: Value<'_>, superset: Value<'_>) -> bool {
     }
     if let Some(uris) = subset.get("resourceSubscriptions") {
         for uri in uris.elements() {
-            let Some(uri) = uri.string() else { return false; };
+            let Some(uri) = uri.string() else {
+                return false;
+            };
             if !superset.get("resourceSubscriptions").is_some_and(|values| {
-                values.elements().any(|value| value.string().is_some_and(|other| uri.equals(other)))
+                values
+                    .elements()
+                    .any(|value| value.string().is_some_and(|other| uri.equals(other)))
             }) {
                 return false;
             }
@@ -437,7 +513,11 @@ pub struct Subscription<'a> {
 impl<'a> Subscription<'a> {
     pub fn new(id: Id<'a>, requested: Value<'a>) -> Result<Self, Error> {
         validate_filter(requested)?;
-        Ok(Self { id, requested, accepted: None })
+        Ok(Self {
+            id,
+            requested,
+            accepted: None,
+        })
     }
 
     pub fn acknowledged(&self) -> bool {
@@ -446,13 +526,20 @@ impl<'a> Subscription<'a> {
 
     /// Check ordering, correlation and opt-in filters before delivering a notification.
     pub fn observe(&mut self, notification: Notification<'a>) -> Result<(), Error> {
-        let params = object(notification.params.ok_or(Error::new(ErrorKind::InvalidParams, 0))?)?;
+        let params = object(
+            notification
+                .params
+                .ok_or(Error::new(ErrorKind::InvalidParams, 0))?,
+        )?;
         let meta = object(params.require("_meta")?)?;
         let id = Id::from_value(meta.require("io.modelcontextprotocol/subscriptionId")?)?;
         if !id.equals(self.id) {
             return Err(Error::new(ErrorKind::UnknownId, params.offset()));
         }
-        if notification.method.matches("notifications/subscriptions/acknowledged") {
+        if notification
+            .method
+            .matches("notifications/subscriptions/acknowledged")
+        {
             if self.accepted.is_some() {
                 return Err(Error::new(ErrorKind::State, params.offset()));
             }
@@ -464,11 +551,16 @@ impl<'a> Subscription<'a> {
             self.accepted = Some(accepted);
             return Ok(());
         }
-        let accepted = self.accepted.ok_or(Error::new(ErrorKind::State, params.offset()))?;
+        let accepted = self
+            .accepted
+            .ok_or(Error::new(ErrorKind::State, params.offset()))?;
         let fields = [
             ("notifications/tools/list_changed", "toolsListChanged"),
             ("notifications/prompts/list_changed", "promptsListChanged"),
-            ("notifications/resources/list_changed", "resourcesListChanged"),
+            (
+                "notifications/resources/list_changed",
+                "resourcesListChanged",
+            ),
         ];
         for (method, field) in fields {
             if notification.method.matches(method) {
@@ -479,10 +571,15 @@ impl<'a> Subscription<'a> {
                 };
             }
         }
-        if notification.method.matches("notifications/resources/updated") {
+        if notification
+            .method
+            .matches("notifications/resources/updated")
+        {
             let uri = string(params.require("uri")?)?;
             if accepted.get("resourceSubscriptions").is_some_and(|values| {
-                values.elements().any(|value| value.string().is_some_and(|other| uri.equals(other)))
+                values
+                    .elements()
+                    .any(|value| value.string().is_some_and(|other| uri.equals(other)))
             }) {
                 return Ok(());
             }

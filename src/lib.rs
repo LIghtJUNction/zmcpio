@@ -15,15 +15,15 @@ pub mod stdio;
 #[cfg(feature = "std")]
 pub mod http_io;
 
-pub mod extensions;
-pub mod http;
-pub mod sse;
 pub mod bridge;
 pub mod client;
+pub mod extensions;
+pub mod http;
 pub mod json;
 pub mod mcp;
 pub mod notifications;
 pub mod rpc;
+pub mod sse;
 pub mod tools;
 pub mod tracker;
 pub mod transport;

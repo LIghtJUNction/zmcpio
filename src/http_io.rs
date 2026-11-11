@@ -15,9 +15,9 @@ fn capacity() -> io::Error {
 }
 fn token(value: &str) -> bool {
     !value.is_empty()
-        && value.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_\x60|~".contains(&b)
-        })
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"!#$%&'*+-.^_\x60|~".contains(&b))
 }
 fn field_value(value: &str) -> bool {
     value.bytes().all(|b| b == b'\t' || (b >= 32 && b != 127))
@@ -79,16 +79,14 @@ impl<'a> Head<'a> {
 
 /// Convert an already encoded header block into caller-owned borrowed views.
 /// The block must end each header with CRLF and must not contain a blank line.
-pub fn header_views<'a>(
-    encoded: &'a str,
-    output: &mut [Header<'a>],
-) -> io::Result<usize> {
+pub fn header_views<'a>(encoded: &'a str, output: &mut [Header<'a>]) -> io::Result<usize> {
     if !encoded.is_empty() && !encoded.ends_with("\r\n") {
         return Err(invalid("incomplete encoded header block"));
     }
     let mut count = 0;
     for line in encoded.split_terminator("\r\n") {
-        let (name, value) = line.split_once(':')
+        let (name, value) = line
+            .split_once(':')
             .ok_or_else(|| invalid("invalid encoded header block"))?;
         if !token(name) || !field_value(value) {
             return Err(invalid("invalid encoded header"));
@@ -96,7 +94,10 @@ pub fn header_views<'a>(
         let Some(slot) = output.get_mut(count) else {
             return Err(capacity());
         };
-        *slot = Header { name, value: value.trim_matches([' ', '\t']) };
+        *slot = Header {
+            name,
+            value: value.trim_matches([' ', '\t']),
+        };
         count += 1;
     }
     Ok(count)
@@ -134,10 +135,7 @@ fn read_line<R: BufRead>(reader: &mut R, output: &mut [u8]) -> io::Result<usize>
 }
 
 /// Read exactly one head without consuming body bytes from the buffered reader.
-pub fn read_head<'a, R: BufRead>(
-    reader: &mut R,
-    output: &'a mut [u8],
-) -> io::Result<Head<'a>> {
+pub fn read_head<'a, R: BufRead>(reader: &mut R, output: &'a mut [u8]) -> io::Result<Head<'a>> {
     let mut used = 0usize;
     loop {
         let n = read_line(reader, &mut output[used..])?;
@@ -146,9 +144,11 @@ pub fn read_head<'a, R: BufRead>(
             break;
         }
     }
-    let raw = core::str::from_utf8(&output[..used])
-        .map_err(|_| invalid("HTTP head is not UTF-8"))?;
-    let first_end = raw.find("\r\n").ok_or_else(|| invalid("missing HTTP start"))?;
+    let raw =
+        core::str::from_utf8(&output[..used]).map_err(|_| invalid("HTTP head is not UTF-8"))?;
+    let first_end = raw
+        .find("\r\n")
+        .ok_or_else(|| invalid("missing HTTP start"))?;
     let mut parts = raw[..first_end].splitn(3, ' ');
     let first = parts.next().unwrap_or("");
     let second = parts.next().unwrap_or("");
@@ -163,10 +163,7 @@ pub fn read_head<'a, R: BufRead>(
         }
         (Some(code), None, None)
     } else {
-        if !token(first)
-            || !target_valid(second)
-            || !matches!(third, "HTTP/1.1" | "HTTP/1.0")
-        {
+        if !token(first) || !target_valid(second) || !matches!(third, "HTTP/1.1" | "HTTP/1.0") {
             return Err(invalid("invalid HTTP request line"));
         }
         (None, Some(first), Some(second))
@@ -202,7 +199,12 @@ pub fn read_head<'a, R: BufRead>(
         "mcp-name",
         "last-event-id",
     ] {
-        if head.headers().filter(|h| h.name.eq_ignore_ascii_case(name)).count() > 1 {
+        if head
+            .headers()
+            .filter(|h| h.name.eq_ignore_ascii_case(name))
+            .count()
+            > 1
+        {
             return Err(invalid("duplicate security or framing header"));
         }
     }
@@ -211,7 +213,8 @@ pub fn read_head<'a, R: BufRead>(
     }
     if method.is_some() && first != "HTTP/1.0" && third == "HTTP/1.1" {
         let host = head.header("host").ok_or_else(|| invalid("missing Host"))?;
-        if host.is_empty() || !host.bytes().all(|b| (33..127).contains(&b))
+        if host.is_empty()
+            || !host.bytes().all(|b| (33..127).contains(&b))
             || host.contains(['/', '\\', '@', '#', '?'])
         {
             return Err(invalid("empty Host"));
@@ -223,7 +226,11 @@ pub fn read_head<'a, R: BufRead>(
 #[derive(Clone, Copy, Debug)]
 enum Framing {
     Length(usize),
-    Chunked { remaining: usize, crlf: bool, done: bool },
+    Chunked {
+        remaining: usize,
+        crlf: bool,
+        done: bool,
+    },
     Eof,
 }
 
@@ -245,12 +252,18 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
             if !encoding.eq_ignore_ascii_case("chunked") {
                 return Err(invalid("unsupported HTTP transfer coding"));
             }
-            Framing::Chunked { remaining: 0, crlf: false, done: false }
+            Framing::Chunked {
+                remaining: 0,
+                crlf: false,
+                done: false,
+            }
         } else if let Some(length) = head.header("content-length") {
             if length.is_empty() || !length.bytes().all(|b| b.is_ascii_digit()) {
                 return Err(invalid("invalid Content-Length"));
             }
-            let length = length.parse().map_err(|_| invalid("Content-Length overflow"))?;
+            let length = length
+                .parse()
+                .map_err(|_| invalid("Content-Length overflow"))?;
             if length > limit {
                 return Err(capacity());
             }
@@ -260,13 +273,27 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
         } else {
             Framing::Eof
         };
-        if head.header("content-encoding").is_some_and(|s| !s.eq_ignore_ascii_case("identity")) {
+        if head
+            .header("content-encoding")
+            .is_some_and(|s| !s.eq_ignore_ascii_case("identity"))
+        {
             return Err(invalid("compressed HTTP bodies are not enabled"));
         }
-        Ok(Self { reader, framing, read: 0, limit, failed: false })
+        Ok(Self {
+            reader,
+            framing,
+            read: 0,
+            limit,
+            failed: false,
+        })
     }
     fn next_chunk(&mut self) -> io::Result<()> {
-        let Framing::Chunked { remaining, crlf, done } = self.framing else {
+        let Framing::Chunked {
+            remaining,
+            crlf,
+            done,
+        } = self.framing
+        else {
             return Ok(());
         };
         if remaining != 0 || done {
@@ -282,7 +309,10 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
         let mut line = [0; 1024];
         let n = read_line(self.reader, &mut line)?;
         let chunk_line = &line[..n - 2];
-        if !chunk_line.iter().all(|b| *b == b'\t' || (32..127).contains(b)) {
+        if !chunk_line
+            .iter()
+            .all(|b| *b == b'\t' || (32..127).contains(b))
+        {
             return Err(invalid("invalid chunk extension characters"));
         }
         let size = chunk_line.split(|b| *b == b';').next().unwrap_or(b"");
@@ -296,7 +326,8 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
                 b'a'..=b'f' => digit - b'a' + 10,
                 _ => digit - b'A' + 10,
             };
-            length = length.checked_mul(16)
+            length = length
+                .checked_mul(16)
                 .and_then(|n| n.checked_add(usize::from(digit)))
                 .ok_or_else(capacity)?;
         }
@@ -317,7 +348,8 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
                 }
                 let raw = core::str::from_utf8(&line[..n - 2])
                     .map_err(|_| invalid("invalid HTTP trailer"))?;
-                let (name, value) = raw.split_once(':')
+                let (name, value) = raw
+                    .split_once(':')
                     .ok_or_else(|| invalid("invalid HTTP trailer"))?;
                 if !token(name) || !field_value(value) {
                     return Err(invalid("invalid HTTP trailer"));
@@ -351,7 +383,10 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
             }
             return Ok(0);
         }
-        let take = output.len().min(remaining).min(self.limit.saturating_sub(self.read));
+        let take = output
+            .len()
+            .min(remaining)
+            .min(self.limit.saturating_sub(self.read));
         if take == 0 {
             return Err(capacity());
         }
@@ -365,11 +400,17 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
             if matches!(self.framing, Framing::Eof) {
                 return Ok(0);
             }
-            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "truncated HTTP body"));
+            return Err(io::Error::new(
+                io::ErrorKind::UnexpectedEof,
+                "truncated HTTP body",
+            ));
         }
         self.read += n;
         match &mut self.framing {
-            Framing::Length(left) | Framing::Chunked { remaining: left, .. } => *left -= n,
+            Framing::Length(left)
+            | Framing::Chunked {
+                remaining: left, ..
+            } => *left -= n,
             Framing::Eof => {}
         }
         Ok(n)
@@ -412,13 +453,17 @@ fn validate_headers(headers: &[Header<'_>], request: bool, sse: bool) -> io::Res
             return Err(invalid("invalid outgoing HTTP header"));
         }
         if ["content-length", "transfer-encoding", "connection"]
-            .iter().any(|name| header.name.eq_ignore_ascii_case(name))
+            .iter()
+            .any(|name| header.name.eq_ignore_ascii_case(name))
             || (request && header.name.eq_ignore_ascii_case("host"))
             || (sse && header.name.eq_ignore_ascii_case("content-type"))
         {
             return Err(invalid("HTTP framing headers are owned by the writer"));
         }
-        if headers[..at].iter().any(|h| h.name.eq_ignore_ascii_case(header.name)) {
+        if headers[..at]
+            .iter()
+            .any(|h| h.name.eq_ignore_ascii_case(header.name))
+        {
             return Err(invalid("duplicate outgoing HTTP header"));
         }
     }
@@ -455,7 +500,15 @@ pub fn write_request<W: Write>(
     headers: &[Header<'_>],
     body: &[u8],
 ) -> io::Result<()> {
-    write_request_with(writer, method, target, host, headers, body, Connection::Close)
+    write_request_with(
+        writer,
+        method,
+        target,
+        host,
+        headers,
+        body,
+        Connection::Close,
+    )
 }
 
 pub fn write_request_with<W: Write>(
@@ -467,7 +520,8 @@ pub fn write_request_with<W: Write>(
     body: &[u8],
     connection: Connection,
 ) -> io::Result<()> {
-    if !token(method) || !target_valid(target)
+    if !token(method)
+        || !target_valid(target)
         || host.is_empty()
         || !host.bytes().all(|b| (33..127).contains(&b))
         || host.contains(['/', '\\', '@', '#', '?'])
@@ -477,7 +531,12 @@ pub fn write_request_with<W: Write>(
     validate_headers(headers, true, false)?;
     write!(writer, "{method} {target} HTTP/1.1\r\nHost: {host}\r\n")?;
     write_headers(writer, headers)?;
-    write!(writer, "Content-Length: {}\r\nConnection: {}\r\n\r\n", body.len(), connection.header())?;
+    write!(
+        writer,
+        "Content-Length: {}\r\nConnection: {}\r\n\r\n",
+        body.len(),
+        connection.header()
+    )?;
     writer.write_all(body)?;
     writer.flush()
 }
@@ -516,9 +575,7 @@ pub fn write_response_with<W: Write>(
     body: &[u8],
     connection: Connection,
 ) -> io::Result<()> {
-    if !(200..600).contains(&status)
-        || ((status == 204 || status == 304) && !body.is_empty())
-    {
+    if !(200..600).contains(&status) || ((status == 204 || status == 304) && !body.is_empty()) {
         return Err(invalid("invalid outgoing response"));
     }
     validate_headers(headers, false, false)?;
@@ -542,7 +599,10 @@ pub fn start_sse<'a, W: Write>(
     write_headers(writer, headers)?;
     writer.write_all(b"Transfer-Encoding: chunked\r\nConnection: close\r\n\r\n")?;
     writer.flush()?;
-    Ok(ChunkWriter { writer, failed: false })
+    Ok(ChunkWriter {
+        writer,
+        failed: false,
+    })
 }
 pub struct ChunkWriter<'a, W> {
     writer: &'a mut W,

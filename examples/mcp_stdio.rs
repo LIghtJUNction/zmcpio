@@ -64,9 +64,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     server.error(call.context, -32602, "Unknown tool", &mut output)?
                 })
             }
-            Action::Extension { context, .. } => Some(
-                server.error(context, -32601, "Method not found", &mut output)?
-            ),
+            Action::Extension { context, .. } => {
+                Some(server.error(context, -32601, "Method not found", &mut output)?)
+            }
             Action::Notification(_) | Action::IncomingResponse(_) => None,
         };
         if let Some(n) = written {

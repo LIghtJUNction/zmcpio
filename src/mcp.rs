@@ -291,10 +291,13 @@ impl<'a> Server<'a> {
             .map(Action::Reply);
         }
         let p = object_optional(request.params)?.ok_or(Error::new(ErrorKind::InvalidParams, 0))?;
-        let requested = p.require("protocolVersion")?
+        let requested = p
+            .require("protocolVersion")?
             .string()
             .ok_or(Error::new(ErrorKind::InvalidParams, p.offset()))?;
-        let negotiated = crate::client::LEGACY_COMPATIBLE_VERSIONS.iter().copied()
+        let negotiated = crate::client::LEGACY_COMPATIBLE_VERSIONS
+            .iter()
+            .copied()
             .find(|version| requested.matches(version))
             .unwrap_or(LEGACY_PROTOCOL_VERSION);
         validate_capabilities(p.require("capabilities")?)?;
@@ -404,7 +407,9 @@ impl<'a> Server<'a> {
             return Err(Error::new(ErrorKind::State, 0));
         }
         if let Some(requests) = input_requests {
-            let caps = context.client_capabilities.ok_or(Error::new(ErrorKind::State, 0))?;
+            let caps = context
+                .client_capabilities
+                .ok_or(Error::new(ErrorKind::State, 0))?;
             extensions::validate_input_requests(requests, caps)?;
         }
         let mut w = Writer::new(output);
@@ -479,24 +484,40 @@ impl<'a> Server<'a> {
             w.raw(b"}");
         }
         let mut comma = self.capabilities.tools;
-        let resource = self.extensions.iter().any(|method| matches!(
-            method, Method::ResourcesList | Method::ResourcesTemplatesList | Method::ResourcesRead
-            | Method::ResourcesSubscribe | Method::ResourcesUnsubscribe
-        ));
-        let prompt = self.extensions.iter().any(|method| matches!(
-            method, Method::PromptsList | Method::PromptsGet
-        ));
+        let resource = self.extensions.iter().any(|method| {
+            matches!(
+                method,
+                Method::ResourcesList
+                    | Method::ResourcesTemplatesList
+                    | Method::ResourcesRead
+                    | Method::ResourcesSubscribe
+                    | Method::ResourcesUnsubscribe
+            )
+        });
+        let prompt = self
+            .extensions
+            .iter()
+            .any(|method| matches!(method, Method::PromptsList | Method::PromptsGet));
         for (name, enabled) in [
             ("resources", resource),
             ("prompts", prompt),
-            ("completions", self.extensions.contains(&Method::CompletionComplete)),
-            ("logging", self.extensions.contains(&Method::LoggingSetLevel)),
+            (
+                "completions",
+                self.extensions.contains(&Method::CompletionComplete),
+            ),
+            (
+                "logging",
+                self.extensions.contains(&Method::LoggingSetLevel),
+            ),
         ] {
             if enabled {
-                if comma { w.raw(b","); }
+                if comma {
+                    w.raw(b",");
+                }
                 w.text(name);
                 w.raw(b":{");
-                if name == "resources" && era == Era::Legacy
+                if name == "resources"
+                    && era == Era::Legacy
                     && self.extensions.contains(&Method::ResourcesSubscribe)
                     && self.extensions.contains(&Method::ResourcesUnsubscribe)
                 {
@@ -506,24 +527,35 @@ impl<'a> Server<'a> {
                 comma = true;
             }
         }
-        let tasks = self.extensions.iter().any(|method| matches!(
-            method, Method::TasksGet | Method::TasksResult | Method::TasksList | Method::TasksCancel
-        ));
+        let tasks = self.extensions.iter().any(|method| {
+            matches!(
+                method,
+                Method::TasksGet | Method::TasksResult | Method::TasksList | Method::TasksCancel
+            )
+        });
         if tasks && (era == Era::Modern || legacy_version == LEGACY_PROTOCOL_VERSION) {
-            if comma { w.raw(b","); }
+            if comma {
+                w.raw(b",");
+            }
             if era == Era::Modern {
                 w.raw(b"\"extensions\":{\"io.modelcontextprotocol/tasks\":{");
             } else {
                 w.raw(b"\"tasks\":{");
             }
             let list = self.extensions.contains(&Method::TasksList);
-            if list { w.raw(b"\"list\":{}"); }
+            if list {
+                w.raw(b"\"list\":{}");
+            }
             if self.extensions.contains(&Method::TasksCancel) {
-                if list { w.raw(b","); }
+                if list {
+                    w.raw(b",");
+                }
                 w.raw(b"\"cancel\":{}");
             }
             w.raw(b"}");
-            if era == Era::Modern { w.raw(b"}"); }
+            if era == Era::Modern {
+                w.raw(b"}");
+            }
         }
         w.raw(b"}");
     }

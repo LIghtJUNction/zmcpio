@@ -183,7 +183,7 @@ fn sentinel_round_trip_and_canonical_padding() {
     for wire in ["=?base64?A?=", "=?base64?AB==?=", "=?base64?AAF=?=", "=?base64?AAAA====?=", "=?base64?AA=A?=", "=?base64?/w==?=", "bad\r\nwire"] {
         assert!(http::decode_header_value(wire, &mut [0; 64]).is_err(), "{wire}");
     }
-    assert_eq!(http::encode_header_value("世界", &mut [0; 1]), Err(HttpError::Capacity { needed: 18 }));
+    assert_eq!(http::encode_header_value("世界", &mut [0; 1]), Err(HttpError::Capacity { needed: 19 }));
 }
 #[test]
 fn standard_headers_match_decoded_unicode_names() {
