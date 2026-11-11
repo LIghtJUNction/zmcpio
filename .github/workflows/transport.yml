@@ -1,0 +1,31 @@
+name: Transport regression
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: transport-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  regression:
+    runs-on: ubuntu-latest
+    env:
+      ZMCPIO_BENCH_SMOKE: '1'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy,rustfmt
+      - name: Compile and exercise all adapters
+        run: cargo +1.99.1 test --locked --all-targets --all-features
+      - name: Verify allocation-free default core
+        run: cargo +1.99.1 test --locked --no-default-features
+      - name: Lint adapters
+        run: cargo +1.99.1 clippy --locked --all-targets --all-features -- -D warnings
+      - name: Formatting
+        run: cargo +1.99.1 fmt --all -- --check
+      - name: Audit dependency closure
+        run: python scripts/audit.py
