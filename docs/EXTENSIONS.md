@@ -132,7 +132,8 @@ subsets and final-response correlation.
 
 Results beyond checked wire fields remain application data. This crate neither
 claims to implement every future/vendor extension nor passes unrecognized
-requests through to an executor. JSON-RPC batches are not supported.
+requests through to an executor. JSON-RPC batches use a separate bounded API and
+are accepted only for 2025-03-26; they do not expand method availability.
 
 Sources checked 2026-11-11:
 

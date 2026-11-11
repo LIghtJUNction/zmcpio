@@ -268,6 +268,23 @@ pub trait SecurityPolicy {
     fn authorized(&self, headers: &[Header<'_>]) -> bool;
     fn session_valid(&self, session_id: &str, headers: &[Header<'_>]) -> bool;
 }
+fn validate_security(
+    headers: &[Header<'_>],
+    security: &impl SecurityPolicy,
+) -> Result<(), HttpError> {
+    if let Some(origin) = header(headers, "origin")?
+        && !security.origin_allowed(origin)
+    {
+        return Err(HttpError::Forbidden);
+    }
+    // Never let an intermediary and the application choose different credentials.
+    let _ = header(headers, "authorization")?;
+    if !security.authorized(headers) {
+        return Err(HttpError::Unauthorized);
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Incoming<'a> {
     pub method: Method,
@@ -292,6 +309,63 @@ impl ServerConfig {
             sessions: false,
         }
     }
+    /// Validate a complete, preflighted batch before dispatching any of its items.
+    ///
+    /// Only 2025-03-26 supports Streamable HTTP batches. `Batch::parse` rejects
+    /// empty arrays, over-limit batches, mixed request/response categories,
+    /// batched initialization and modern envelopes. Invalid individual requests
+    /// remain entries requiring JSON-RPC errors, not silently dropped messages.
+    ///
+    /// This performs the shared HTTP/security checks once for the whole POST.
+    /// Sessions are never exempted: initialization cannot occur inside a batch.
+    /// Pass the returned kind to `response_mode`; notifications/responses accept
+    /// only an empty 202, while requests (including invalid entries needing an
+    /// error response) require JSON or SSE. Dispatch, lifecycle and pending-ID
+    /// accounting remain caller-owned. Invalid response entries are local errors
+    /// and MUST NOT elicit response-to-response messages.
+    pub fn validate_batch(
+        &self,
+        method: Method,
+        headers: &[Header<'_>],
+        batch: crate::batch::Batch<'_>,
+        security: &impl SecurityPolicy,
+    ) -> Result<BodyKind, HttpError> {
+        validate_security(headers, security)?;
+        if method != Method::Post
+            || self.version != Version::V2025_03_26
+            || batch.version() != self.version.as_str()
+            || batch.is_empty()
+        {
+            return Err(HttpError::BadRequest);
+        }
+        if let Some(version) = header(headers, "mcp-protocol-version")?
+            && version != self.version.as_str()
+        {
+            return Err(HttpError::UnsupportedVersion);
+        }
+        let session_id = header(headers, "mcp-session-id")?;
+        if session_id.is_some_and(|value| !visible_id(value)) {
+            return Err(HttpError::InvalidHeader);
+        }
+        if self.sessions {
+            let id = session_id.ok_or(HttpError::BadRequest)?;
+            if !security.session_valid(id, headers) {
+                return Err(HttpError::SessionExpired);
+            }
+        }
+        if !header(headers, "content-type")?.is_some_and(|value| media(value, JSON)) {
+            return Err(HttpError::UnsupportedMediaType);
+        }
+        if !accepts(headers, JSON) || !accepts(headers, SSE) {
+            return Err(HttpError::NotAcceptable);
+        }
+        Ok(match batch.kind() {
+            crate::batch::BatchKind::Requests => BodyKind::Request,
+            crate::batch::BatchKind::Notifications => BodyKind::Notification,
+            crate::batch::BatchKind::Responses => BodyKind::Response,
+        })
+    }
+
     /// Validate envelope before calling a tool or taking any other side effect.
     /// For tools with x-mcp-header annotations, also call validate_parameter_headers
     /// with the selected tool schema before executing it.
@@ -302,16 +376,7 @@ impl ServerConfig {
         scratch: &mut [u8],
     ) -> Result<ServerAction<'a>, HttpError> {
         let headers = incoming.headers;
-        if let Some(origin) = header(headers, "origin")?
-            && !security.origin_allowed(origin)
-        {
-            return Err(HttpError::Forbidden);
-        }
-        // Disallow ambiguous credentials even if the host would select one.
-        let _ = header(headers, "authorization")?;
-        if !security.authorized(headers) {
-            return Err(HttpError::Unauthorized);
-        }
+        validate_security(headers, security)?;
         if self.version.is_modern() && incoming.method != Method::Post {
             return Err(HttpError::MethodNotAllowed);
         }

@@ -16,6 +16,7 @@ pub mod stdio;
 #[cfg(feature = "std")]
 pub mod http_io;
 
+pub mod batch;
 pub mod bridge;
 pub mod client;
 pub mod extensions;

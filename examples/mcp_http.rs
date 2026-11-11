@@ -70,6 +70,18 @@ fn serve(socket: TcpStream, streamed: bool, host: &str) -> Result<()> {
         http_io::write_response(&mut socket, 404, &[], b"")?;
         return Ok(());
     }
+    // Origin/Host checks also precede JSON parsing and Expect/body handling.
+    if head
+        .header("origin")
+        .is_some_and(|origin| !policy.origin_allowed(origin))
+    {
+        http_io::write_response(&mut socket, 403, &[], b"")?;
+        return Ok(());
+    }
+    if !policy.authorized(headers) {
+        http_io::write_response(&mut socket, 401, &[], b"")?;
+        return Ok(());
+    }
     let method = match head.method() {
         Some("POST") => Method::Post,
         Some("GET") => Method::Get,

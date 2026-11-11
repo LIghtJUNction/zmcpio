@@ -76,6 +76,7 @@ pagination, error policies and custom transports. On Windows use `.exe` paths.
 | Tool client/server | Discovery, list/call, pagination, multimodal results, progress, cancellation, ID correlation |
 | Streamable HTTP | Modern POST-only and legacy POST/GET/DELETE envelopes; JSON/SSE; sessions and resume metadata for legacy only |
 | SSE | Incremental caller-buffered decoder, encoder, comments, BOM/UTF-8 handling, backpressure and exact capacity errors |
+| Legacy batches | Caller-bounded 2025-03-26 request/response arrays, per-item errors and no response for notification-only batches |
 | Legacy HTTP+SSE | Same-origin endpoint negotiation and separate message stream; no implicit credential forwarding or tool replay |
 | Other MCP methods | Explicitly enabled resource/prompt/completion/logging routes, callback and MRTR envelopes, subscription validation, version-specific task messages |
 | Optional I/O | Real stdio process adapter and bounded HTTP/1.1 framing over supplied streams |
@@ -99,7 +100,8 @@ Legacy single-message negotiation covers 2024-11-05, 2025-03-26, 2025-06-18 and
 2025-11-25. Modern requests use 2026-07-28. This is a set of protocol and transport
 primitives, not an automatic agent, OAuth client, task worker or storage service.
 It is not a certification that every optional extension or third-party server
-conforms. JSON-RPC batches are not accepted. Application-owned callbacks, task
+conforms. Bounded JSON-RPC batches are supported only for 2025-03-26, through an
+explicit batch API; other revisions reject arrays. Application-owned callbacks, task
 execution, policy, replay storage and timers remain explicit.
 
 ## Memory contract

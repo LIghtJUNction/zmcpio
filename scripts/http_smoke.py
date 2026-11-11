@@ -105,6 +105,21 @@ try:
     connection.close()
 finally:
     close(process)
+# Invalid origins are rejected even when the enclosed JSON is malformed.
+process, endpoint = launch("json")
+try:
+    connection = http.client.HTTPConnection(endpoint.hostname, endpoint.port, timeout=10)
+    connection.request("POST", endpoint.path, "{", {
+        "Content-Type": "application/json", "Accept": "application/json, text/event-stream",
+        "Origin": "https://untrusted.invalid",
+    })
+    response = connection.getresponse()
+    assert response.status == 403, response.status
+    response.read()
+    connection.close()
+finally:
+    close(process)
+
 for payload, error_code in [("{", -32700), ('{"jsonrpc":"2.0","id":true,"method":"tools/call"}', -32600), ("[]", -32600)]:
     process, endpoint = launch("json")
     try:

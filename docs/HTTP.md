@@ -13,8 +13,9 @@ DNS, OAuth, connection pooling and async scheduling remain application choices.
 | 2025-03-26, 2025-06-18, 2025-11-25 Streamable HTTP | POST; request returns JSON or SSE, accepted notification/response returns empty 202; optional GET SSE and DELETE | Optional server-issued sessions. GET with Last-Event-ID supports host-managed resumption. Disconnection alone does not cancel a request. |
 | 2024-11-05 HTTP+SSE | A long-lived GET receives an endpoint event and JSON-RPC messages; separate POSTs send messages and return 202 | Two channels share one legacy MCP lifecycle. A POST acknowledgment is not the JSON-RPC result. |
 
-Legacy negotiation here is single-message compatibility. JSON-RPC batch arrays
-are rejected, including the batch feature of the 2025-03-26 specification.
+Legacy negotiation covers the four listed revisions. JSON-RPC batch arrays are
+supported only for 2025-03-26 using the explicit bounded batch API below; other
+revisions require single messages.
 The transport does not invent a session or silently switch protocol versions.
 For 2025-03-26, a missing version header is accepted only by an explicitly
 configured matching server; later legacy versions validate it after initialization.
@@ -68,6 +69,10 @@ tool. Neither reconnecting nor obtaining a new session proves a retry is safe.
 Applications must decide from operation semantics, idempotency controls and
 their own execution records. No helper automatically repeats a tool request.
 
+`tests/http_session_network.rs` exercises an actual truncated tool POST followed
+by explicit GET recovery, DELETE and expired-session cleanup. It asserts one tool
+execution, one replayed final result and no second tool POST.
+
 For legacy recovery, generate GET headers with `get_headers(last_event_id)`
 and let the host select and replay previously stored events. Event storage,
 retention, unique event IDs and ownership checks are not provided by this crate.
@@ -100,6 +105,40 @@ Map `HttpError` through `status`/`write_rpc`; use `rpc_error_status` when
 mapping a protocol error reply. Send an Allow header with a 405 response.
 Accepted notifications and accepted legacy response messages receive empty 202.
 Keep JSON-RPC parse/invalid-request errors distinct from tool execution errors.
+
+## Legacy batches (2025-03-26 only)
+
+Parse the complete JSON array into a caller-owned token tape, then call
+`batch::Batch::parse(root, version, max_items)` before any dispatch. Empty or
+oversized arrays, initialization inside an array, modern per-request metadata
+and mixed request/response categories are rejected before effects. Valid
+request siblings are retained when individual items are malformed.
+
+For HTTP, call `ServerConfig::validate_batch` once for the POST. It applies
+shared security, media, version and session checks and returns a BodyKind:
+requests (including invalid request items needing errors), notifications-only,
+or responses-only. Batch initialization is forbidden, so batch requests never
+receive the initialization exception to a required session ID.
+
+Iterate `entries()` explicitly. Each entry contains its borrowed raw JSON and
+parsed message or error. Pass valid request item bytes to `Server::handle` and
+valid response item bytes to `Client::receive`, using suitable scratch tokens.
+Return id:null/-32600 for invalid request entries; malformed response entries are
+local errors and must not trigger response-to-response messages. The host owns
+duplicate-ID policy, per-item authorization, lifecycle order and execution.
+
+`encode_requests` joins already encoded request/notification values.
+`encode_responses` takes optional response values; None denotes no response.
+Both preflight the entire output and leave it unchanged on failure. A batch with
+no replies emits zero bytes, never an empty array. Notification-only and
+response-only HTTP POSTs receive empty 202. Retain completed results for a larger
+output buffer; never re-execute tools after a serialization failure. Client
+requests already encoded before a failed batch encoding retain their pending
+slots: retry serialization or explicitly abandon unsent IDs.
+
+The single-message `rpc::parse` contract remains strict; no modern request can
+silently acquire batch semantics. See `tests/batch.rs` and
+`tests/http_batch.rs` for roundtrips and shared-envelope validation.
 
 ## Incremental SSE and bounded memory
 

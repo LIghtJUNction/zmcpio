@@ -36,6 +36,8 @@ requires formatting and warnings-as-errors. No validation job publishes a crate.
 | Independent Python JSON/SSE peer; Rust executable client; invalid Origin/RPC/methods; 100-continue | scripts/http_smoke.py |
 | Old dual-endpoint HTTP+SSE, initialization retained across POSTs, duplicate reply without tool replay | tests/legacy_sse_network.rs |
 | Every split, BOM/UTF-8, CRLF, heartbeats, EOF, backpressure and capacity recovery | tests/sse.rs |
+| Legacy session creation, truncated stream, explicit GET replay without tool re-execution, DELETE/404 cleanup | tests/http_session_network.rs |
+| Exact-2025-03-26 batches, per-item errors, atomic arrays, shared HTTP/session gates | tests/batch.rs and tests/http_batch.rs |
 | Same-origin legacy endpoint negotiation and atomic URI failures | tests/legacy_sse.rs |
 | Framing ambiguity, short reads/writes, limits, keepalive, interruption, informational heads and poisoned state | tests/http_io.rs, tests/http_io_regressions.rs, tests/http_informational.rs |
 | MRTR, Tasks, callback opt-in, subscription ordering/filter/correlation | tests/extensions.rs and tests/client.rs |
@@ -87,8 +89,8 @@ process/socket/buffer setup, which is distinct from the measured codec hot paths
 TLS verification, OAuth acquisition, app authorization, complete JSON Schema
 validation, durable replay/task state, task scheduling, callback execution,
 async runtimes and automatic retries are host responsibilities. The built-in
-HTTP adapter is HTTP/1.x, not an HTTP/2/3 implementation. Legacy compatibility is
-single-message, not JSON-RPC batch support.
+HTTP adapter is HTTP/1.x, not an HTTP/2/3 implementation. JSON-RPC batches are
+bounded and supported only for the exact 2025-03-26 revision, never initialization.
 
 The release workflow retains its explicit bump/version mechanism and
 CARGO_REGISTRY_TOKEN publication gate. A transport change does not implicitly

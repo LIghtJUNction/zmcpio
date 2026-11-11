@@ -43,7 +43,9 @@ Legacy mode starts with `initialize`. A supported initialize response moves to
 `AwaitInitialized`; encode and successfully send `initialized` before requesting
 tools. Client negotiation accepts the single-message tools baselines `2025-11-25`,
 `2025-06-18`, `2025-03-26` and `2024-11-05`. Use `initialize_with_version` for an
-explicit initial revision. Batches remain unsupported. `protocol_version()`
+explicit initial revision. Only 2025-03-26 supports the opt-in bounded `batch` API;
+`receive` still takes one message, so batch consumers explicitly iterate entries.
+`protocol_version()`
 exposes the selected version; unknown revisions are rejected.
 
 Modern mode uses `2026-07-28` metadata on every request and is immediately ready.

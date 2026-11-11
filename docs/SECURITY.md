@@ -71,3 +71,10 @@ application decisions, not authorization. Require explicit capabilities and
 user/business approval where appropriate; preserve opaque continuation state
 without evaluating it. Apply independent per-request, wall-clock, concurrency,
 pagination, subscription and task budgets.
+
+Legacy batches are opt-in only for 2025-03-26. Preflight the full array with the
+batch parser and validate the HTTP envelope before effects. Then authorize each
+operation separately; a batch is not a permission to execute every sibling.
+Initialization and modern metadata cannot be smuggled into this legacy boundary.
+Never answer malformed response batches or re-execute completed tools to grow a
+response array buffer.

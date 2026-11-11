@@ -3,7 +3,9 @@
 Client behavior is described in [CLIENT.md](CLIENT.md). Explicit legacy
 single-message negotiation covers 2024-11-05, 2025-03-26, 2025-06-18 and
 2025-11-25. The server selects a supported requested revision or offers the
-latest supported legacy revision. JSON-RPC batches are not accepted. Modern discovery/list responses include private, zero-TTL cache
+latest supported legacy revision. Bounded JSON-RPC batches are supported only for
+2025-03-26 through the explicit `batch` module; initialization is never batched.
+Other revisions reject arrays. Modern discovery/list responses include private, zero-TTL cache
 hints; the client does not cache or grant permission from those hints.
 
 Normative references checked 2026-11-11:
