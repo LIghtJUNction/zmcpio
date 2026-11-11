@@ -103,7 +103,7 @@ pub fn header_views<'a>(
 }
 
 fn read_line<R: BufRead>(reader: &mut R, output: &mut [u8]) -> io::Result<usize> {
-    let mut used = 0;
+    let mut used = 0usize;
     loop {
         let input = reader.fill_buf()?;
         if input.is_empty() {
@@ -135,7 +135,7 @@ pub fn read_head<'a, R: BufRead>(
     reader: &mut R,
     output: &'a mut [u8],
 ) -> io::Result<Head<'a>> {
-    let mut used = 0;
+    let mut used = 0usize;
     loop {
         let n = read_line(reader, &mut output[used..])?;
         used += n;
@@ -276,8 +276,8 @@ impl<'a, R: BufRead> BodyReader<'a, R> {
         }
         let mut line = [0; 1024];
         let n = read_line(self.reader, &mut line)?;
-        let line = &line[..n - 2];
-        let size = line.split(|b| *b == b';').next().unwrap_or(b"");
+        let chunk_line = &line[..n - 2];
+        let size = chunk_line.split(|b| *b == b';').next().unwrap_or(b"");
         if size.is_empty() || !size.iter().all(u8::is_ascii_hexdigit) {
             return Err(invalid("invalid chunk size"));
         }
@@ -378,7 +378,7 @@ impl<R: BufRead> Read for BodyReader<'_, R> {
 /// Read a bounded body completely; reject overflow, including one extra byte.
 /// For SSE use incremental reads instead, so long-lived streams are not buffered.
 pub fn read_body<R: Read>(reader: &mut R, output: &mut [u8]) -> io::Result<usize> {
-    let mut used = 0;
+    let mut used = 0usize;
     while used < output.len() {
         let n = reader.read(&mut output[used..])?;
         if n == 0 {
