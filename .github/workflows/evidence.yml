@@ -1,0 +1,59 @@
+name: Benchmark and release evidence
+on:
+  push:
+    branches: [main]
+    paths: ['src/**', 'tests/**', 'benches/**', 'scripts/**', 'Cargo.toml', '.github/workflows/evidence.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: evidence-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  evidence:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup default 1.99.1
+      - name: Capture source, environment and full benchmark
+        run: |
+          mkdir -p "$RUNNER_TEMP/zmcp-evidence"
+          {
+            git rev-parse HEAD
+            rustc -Vv
+            uname -a
+            lscpu
+          } > "$RUNNER_TEMP/zmcp-evidence/environment.txt"
+          cargo bench --locked --bench core > "$RUNNER_TEMP/zmcp-evidence/benchmark.csv"
+          cat "$RUNNER_TEMP/zmcp-evidence/benchmark.csv"
+          git archive --format=tar.gz -o "$RUNNER_TEMP/zmcp-evidence/source.tar.gz" HEAD
+      - id: candidate
+        env:
+          BUMP: patch
+          PUBLISH: 'false'
+        run: python scripts/release.py plan
+      - name: Exercise candidate bump and package verification without credentials
+        env:
+          VERSION: ${{ steps.candidate.outputs.version }}
+          ZMCP_BENCH_SMOKE: '1'
+        run: |
+          python scripts/test_release.py
+          python scripts/release.py apply
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add Cargo.toml Cargo.lock
+          if ! git diff --cached --quiet; then git commit -m 'ci: validate unpublished release candidate'; fi
+          cargo test --release --locked --all-targets
+          python scripts/audit.py
+          cargo package --locked
+          cargo publish --dry-run --locked
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: zmcp-evidence-${{ github.sha }}
+          path: ${{ runner.temp }}/zmcp-evidence/
+          if-no-files-found: error
+          retention-days: 30
