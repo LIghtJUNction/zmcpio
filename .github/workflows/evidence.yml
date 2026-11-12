@@ -13,7 +13,7 @@ jobs:
   evidence:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - run: |
@@ -53,7 +53,7 @@ jobs:
           python scripts/audit.py
           cargo package --locked
           cargo publish --dry-run --locked
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: zmcpio-evidence-${{ github.sha }}
           path: ${{ runner.temp }}/zmcpio-evidence/
