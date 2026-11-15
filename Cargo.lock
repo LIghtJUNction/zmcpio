@@ -4,22 +4,22 @@ version = 4
 
 [[package]]
 name = "zcall"
-version = "0.1.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c574575d70bdeea1132cf9c0ad341ca482bb8c3be3fca55a009451ee294bafd2"
+checksum = "82a8650e8302ae5e0ebd861e9062809c9d9162d0a839c7e8f9b6e54afbd2d20d"
 dependencies = [
  "zconv",
 ]
 
 [[package]]
 name = "zconv"
-version = "0.2.2"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48036db39f0148be3536614d546448cc9a386ce30b43df901a2c779b9e1c1421"
+checksum = "fb4c2c557b09be10a449b44d4034059837ab1980e8f89b830aedefcc9d0bbc15"
 
 [[package]]
 name = "zmcpio"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "zcall",
 ]
