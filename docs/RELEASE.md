@@ -12,7 +12,7 @@ verifies live registry ownership and checks that its exact version is unpublishe
 
 Use the **Release** workflow on `main` with `publish=true`. Select patch/minor/major
 to increment the manifest, or set `version` explicitly to publish an already
-prepared candidate (for example `0.2.0`). To publish without a manual
+prepared candidate (for example `0.4.0`). To publish without a manual
 workflow dispatch, add or update `.github/release-request.txt` on `main` with
 the intended SemVer version as its only content. Only pushes changing that
 specific file trigger the release workflow automatically; ordinary code pushes
@@ -20,8 +20,8 @@ run CI without publishing. Both paths perform the same registry preflight and
 cross-platform validation before publishing. Do not modify the request file
 again for a version already on crates.io.
 
-Version 0.2 requires exactly one direct dependency, zcall; its sole dependency
-zconv is transitive. `scripts/audit.py` checks that full closure and rejects extra
+Version 0.4 requires exactly zcall 0.3.0 as its direct dependency; zconv 0.4.0
+is transitive. `scripts/audit.py` checks that full closure and rejects extra
 development/build/optional dependencies. Default no_std and all-features stdio
 tests run separately. A Python peer independently verifies actual stdio client
 traffic, not just library-to-library fixture agreement.

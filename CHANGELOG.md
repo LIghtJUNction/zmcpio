@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.0 — zcall 0.3 and zconv 0.4 integration
+
+- Pin zcall 0.3.0 and its zconv 0.4.0 dependency while preserving the no_std core and optional std transports.
+- Declare MCP tool schemas explicitly as JSON Schema through the updated model contract.
+- Accept the object branch of ObjectOrText tool arguments only after validating a complete JSON object. Reject prose and structured result-array handles as executable arguments.
+- Re-export the upgraded zcall API, including typed multimodal tool results, distinct reasoning summaries, provider events, continuous usage controls and resource codecs.
+
 ## 0.3.0 — HTTP transports and opt-in protocol extensions
 
 - Add allocation-free SSE encoding/decoding and era-aware Streamable HTTP rules.

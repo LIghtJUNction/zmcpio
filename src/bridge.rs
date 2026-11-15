@@ -104,6 +104,7 @@ pub fn tool_definition<'a, const N: usize>(
         name,
         description,
         parameters: model::Presence::Value(parameters),
+        schema_dialect: model::SchemaDialect::JsonSchema,
         strict: model::Presence::Value(false),
         legacy: false,
     })
@@ -204,9 +205,11 @@ where
     let name = decoded(name, name_storage)?;
     let bytes = match arguments {
         model::Data::Json(value) => value.raw(),
-        model::Data::JsonText(value) => decoded(value, argument_bytes)?.as_bytes(),
+        model::Data::JsonText(value) | model::Data::ObjectOrText { text: value, .. } => {
+            decoded(value, argument_bytes)?.as_bytes()
+        }
         model::Data::EmptyObject => b"{}",
-        model::Data::Text(_) => {
+        model::Data::Text(_) | model::Data::Content(_) => {
             return Err(
                 model::Error::invalid("tool arguments", "prose is not JSON arguments").into(),
             );

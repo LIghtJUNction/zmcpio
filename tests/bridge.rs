@@ -16,6 +16,34 @@ fn model_call<'a>(id: &'a str, name: &'a str, arguments: model::Data<'a>) -> mod
     }
 }
 
+#[test]
+fn object_or_text_arguments_require_the_object_branch() {
+    let mut identity = [0; 32];
+    let mut arguments = [0; 64];
+    let mut tokens = [Token::EMPTY; 32];
+    for (input, accepted) in [("{\"value\":7}", true), ("not JSON", false), ("[1]", false)] {
+        let content = model_call(
+            "c",
+            "echo",
+            model::Data::ObjectOrText {
+                text: model::Text::new(input),
+                key: model::Text::new("output"),
+            },
+        );
+        let result = bridge::prepare_call(
+            content,
+            &mut identity,
+            &mut arguments,
+            &mut tokens,
+            Limits::default(),
+        );
+        assert_eq!(result.is_ok(), accepted);
+        if let Ok(call) = result {
+            assert_eq!(call.arguments().raw(), input);
+        }
+    }
+}
+
 fn response(id: i64, fields: &str) -> String {
     format!(
         r#"{{"jsonrpc":"2.0","id":{id},"result":{{"resultType":"complete","_meta":{{"io.modelcontextprotocol/serverInfo":{{"name":"server","version":"1"}}}},{fields}}}}}"#,

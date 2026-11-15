@@ -14,18 +14,22 @@ publisher and **must not** be used as a dependency for this implementation.
 
 ```toml
 [dependencies]
-zmcpio = { version = "0.3", default-features = false }
+zmcpio = { version = "0.4", default-features = false }
 ```
 
 To use the stdio and HTTP/1.1 I/O adapters, enable the optional `std` feature:
 
 ```toml
 [dependencies]
-zmcpio = { version = "0.3", default-features = false, features = ["std"] }
+zmcpio = { version = "0.4", default-features = false, features = ["std"] }
 ```
 
 The protocol core and `zcall` bridge do not require an allocator. Process/socket
 setup may allocate. HTTPS requires a caller-supplied verified TLS stream.
+Version 0.4.0 pins zcall 0.3.0, which pins zconv 0.4.0. Their updated model
+contract and resource codecs are available through `zmcpio::zcall`. The MCP
+bridge still accepts only complete JSON object tool arguments and preserves the
+full MCP result envelope; resource codecs do not execute MCP or HTTP operations.
 
 ## Boundary
 
