@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Pin zcall 0.4.0 so MCP tools and applications using the current zcall contract share the same Rust types.
+- Keep zcall default features disabled and preserve the allocation-free, no_std protocol core and optional std transports.
+
 ## 0.4.0 — zcall 0.3 and zconv 0.4 integration
 
 - Pin zcall 0.3.0 and its zconv 0.4.0 dependency while preserving the no_std core and optional std transports.
