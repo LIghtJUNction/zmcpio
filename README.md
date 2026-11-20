@@ -26,10 +26,12 @@ zmcpio = { version = "0.4", default-features = false, features = ["std"] }
 
 The protocol core and `zcall` bridge do not require an allocator. Process/socket
 setup may allocate. HTTPS requires a caller-supplied verified TLS stream.
-Version 0.4.0 pins zcall 0.3.0, which pins zconv 0.4.0. Their updated model
-contract and resource codecs are available through `zmcpio::zcall`. The MCP
-bridge still accepts only complete JSON object tool arguments and preserves the
-full MCP result envelope; resource codecs do not execute MCP or HTTP operations.
+The source checkout pins zcall 0.4.0, which pins zconv 0.4.0. The shared model
+contract and resource codecs are available through `zmcpio::zcall`. The zcall
+standard-library server remains opt-in; zmcpio keeps its dependency defaults
+disabled. The MCP bridge still accepts only complete JSON object tool arguments and
+preserves the full MCP result envelope; resource codecs do not execute MCP or HTTP
+operations.
 
 ## Boundary
 
