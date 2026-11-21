@@ -26,6 +26,7 @@ import io
 import json
 import os
 import pathlib
+import re
 import runpy
 import subprocess
 import tempfile
@@ -48,7 +49,10 @@ class GitOnlyTests(unittest.TestCase):
         self.root = pathlib.Path(self.temp.name) / 'source'
         self.root.mkdir()
         for name in ('Cargo.toml', 'Cargo.lock'):
-            (self.root / name).write_bytes((REPOSITORY / name).read_bytes())
+            # Fixture identities do not follow a later release version bump.
+            text = (REPOSITORY / name).read_text()
+            text = re.sub(r'(?m)^version = "[^\"]+"$', 'version = "0.4.0"', text)
+            (self.root / name).write_text(text)
         (self.root / 'src').mkdir()
         (self.root / 'src/lib.rs').write_text('// private source fixture\n')
         (self.root / 'scripts').mkdir()
@@ -64,6 +68,10 @@ class GitOnlyTests(unittest.TestCase):
         self.patch_root = mock.patch.object(release, 'ROOT', self.root)
         self.patch_root.start()
         self.addCleanup(self.patch_root.stop)
+        paths = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', '.cargo_vcs_info.json', 'src/lib.rs'}
+        listing = mock.patch.object(release, 'publication_paths', return_value=paths)
+        listing.start()
+        self.addCleanup(listing.stop)
 
     def git(self, *args):
         return subprocess.run(['git', '-c', 'commit.gpgsign=false', '-C', str(self.root), *args],
@@ -251,6 +259,10 @@ class GitOnlyTests(unittest.TestCase):
         self.assertEqual(release.stage_receipt(dest)['stage_commit'], receipt['stage_commit'])
         self.assertEqual(receipt['dependencies']['zcall']['git_source'],
                          next(p for p in self.lock()['package'] if p['name'] == 'zcall')['source'])
+        self.assertFalse((dest / 'docs/registry-source.json').exists())
+        self.assertEqual(set(release.git(dest, 'diff', '--name-only', self.head,
+                                        receipt['stage_commit']).splitlines()),
+                         {'Cargo.toml', 'Cargo.lock'})
 
     def test_stage_rejects_inside_source_existing_destination_and_drift(self):
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
@@ -327,16 +339,18 @@ class GitOnlyTests(unittest.TestCase):
             release.push_source(dest, self.head, 'main')
 
 
-    def make_archive(self, stage, changes=None):
+    def make_archive(self, stage, changes=None, exclude=()):
         import tarfile
         value = tomllib.loads((stage / 'Cargo.toml').read_text())
         receipt = release.stage_receipt(stage)
         content = {name: (stage / name).read_bytes() for name in (
-            'Cargo.toml', 'Cargo.lock', 'docs/registry-source.json', 'src/lib.rs')}
+            'Cargo.toml', 'Cargo.lock', 'src/lib.rs')}
         content['Cargo.toml.orig'] = content['Cargo.toml']
         content['.cargo_vcs_info.json'] = json.dumps({
             'git': {'sha1': receipt['stage_commit'], 'dirty': False}, 'path_in_vcs': ''}).encode()
         content.update(changes or {})
+        for name in exclude:
+            content.pop(name)
         archive = pathlib.Path(self.temp.name) / 'fixture.crate'
         prefix = value['package']['name'] + '-' + value['package']['version'] + '/'
         with tarfile.open(archive, 'w:gz') as target:
@@ -387,6 +401,13 @@ class GitOnlyTests(unittest.TestCase):
                 release.verify_package(stage, self.make_archive(stage, change))
         self.assertEqual(self.git('status', '--porcelain'), '')
 
+    def test_archive_cannot_omit_an_included_source_file(self):
+        stage = pathlib.Path(self.temp.name) / 'registry'
+        with mock.patch.object(release, 'get_json', side_effect=self.registry):
+            release.stage_registry(stage)
+        with self.assertRaisesRegex(ValueError, 'complete Cargo publication file list'):
+            release.verify_package(stage, self.make_archive(stage, exclude=('src/lib.rs',)))
+
     def test_legal_prerelease_bump_preserves_git_identities(self):
         old = self.lock()
         release.apply_version('0.4.1-rc.1+build.2')
@@ -402,20 +423,26 @@ class GitOnlyTests(unittest.TestCase):
         stage = pathlib.Path(self.temp.name) / 'registry'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
             release.stage_registry(stage)
-        proof_path = stage / 'docs/registry-source.json'
-        proof = json.loads(proof_path.read_text())
-        proof['dependencies']['zcall']['git_source'] = 'git+' + GIT['zcall'] + '#' + 'f'*40
-        proof_path.write_text(json.dumps(proof, indent=2) + '\n')
-        release.git(stage, 'add', 'docs/registry-source.json')
+        receipt_path = stage / '.git/zmcpio-registry-stage.json'
+        receipt = json.loads(receipt_path.read_text())
+        receipt['dependencies']['zcall']['git_source'] = 'git+' + GIT['zcall'] + '#' + 'f'*40
+        receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
+        with self.assertRaisesRegex(ValueError, 'original Git lock'):
+            release.stage_receipt(stage)
+
+    def test_registry_stage_cannot_add_packaged_provenance_or_change_source(self):
+        stage = pathlib.Path(self.temp.name) / 'registry'
+        with mock.patch.object(release, 'get_json', side_effect=self.registry):
+            release.stage_registry(stage)
+        (stage / 'src/lib.rs').write_text('// changed after projection\n')
+        release.git(stage, 'add', 'src/lib.rs')
         release.git(stage, '-c', 'commit.gpgsign=false', 'commit', '--amend', '--no-edit', '--quiet')
         receipt_path = stage / '.git/zmcpio-registry-stage.json'
         receipt = json.loads(receipt_path.read_text())
-        receipt['dependencies'] = proof['dependencies']
         receipt['stage_commit'] = release.git(stage, 'rev-parse', 'HEAD').strip()
         receipt['stage_tree'] = release.git(stage, 'rev-parse', 'HEAD^{tree}').strip()
-        receipt['stage_inputs']['docs/registry-source.json'] = release.digest(proof_path)
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-        with self.assertRaisesRegex(ValueError, 'original Git lock'):
+        with self.assertRaisesRegex(ValueError, 'outside the manifest and lock'):
             release.stage_receipt(stage)
 
 

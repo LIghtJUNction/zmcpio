@@ -228,20 +228,17 @@ def stage_registry(destination, expected_source=None):
         created = True
         git(ROOT, 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(ROOT.resolve()), str(destination))
         git(destination, 'checkout', '--quiet', '--detach', snapshot['commit'])
-        require(not (destination / 'docs/registry-source.json').exists(), 'Reserved provenance path already exists')
         (destination / 'Cargo.toml').write_text(manifest_text)
         (destination / 'Cargo.lock').write_text(lock_text)
-        (destination / 'docs').mkdir(exist_ok=True)
-        (destination / 'docs/registry-source.json').write_text(json.dumps(provenance, indent=2) + '\n')
         git(destination, 'config', 'user.name', 'Registry staging')
         git(destination, 'config', 'user.email', 'registry-staging@example.invalid')
-        git(destination, 'add', 'Cargo.toml', 'Cargo.lock', 'docs/registry-source.json')
+        git(destination, 'add', 'Cargo.toml', 'Cargo.lock')
         git(destination, '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m',
             'Stage registry package from ' + snapshot['commit'])
         receipt = dict(provenance, source_root=str(ROOT.resolve()),
                        stage_commit=git(destination, 'rev-parse', 'HEAD').strip(),
                        stage_tree=git(destination, 'rev-parse', 'HEAD^{tree}').strip(),
-                       stage_inputs={p: digest(destination / p) for p in ('Cargo.toml', 'Cargo.lock', 'docs/registry-source.json')})
+                       stage_inputs={p: digest(destination / p) for p in ('Cargo.toml', 'Cargo.lock')})
         (destination / '.git/zmcpio-registry-stage.json').write_text(json.dumps(receipt, indent=2) + '\n')
         stage_receipt(destination)
         # Re-read the original checkout after the projection, including its lock and HEAD.
@@ -265,12 +262,16 @@ def stage_receipt(stage):
             and git(stage, 'rev-parse', 'HEAD^').strip() == receipt['source_commit']
             and not git(stage, 'status', '--porcelain', '--untracked-files=all'),
             'Registry stage changed after creation')
-    require(set(receipt['stage_inputs']) == {'Cargo.toml', 'Cargo.lock', 'docs/registry-source.json'},
+    require(set(receipt['stage_inputs']) == {'Cargo.toml', 'Cargo.lock'},
             'Incomplete registry stage inputs')
     for name, checksum in receipt['stage_inputs'].items():
         require(digest(stage / name) == checksum, 'Registry stage input changed')
-    provenance = json.loads((stage / 'docs/registry-source.json').read_text())
-    require(all(receipt[k] == provenance[k] for k in provenance), 'Stage receipt/provenance mismatch')
+    # The public crate must contain the same source files as the Git package.
+    # Keep the projection receipt outside Cargo's publication scope and bind the
+    # complete staging tree to its source parent instead of adding a docs file.
+    require(set(git(stage, 'diff', '--name-only', receipt['source_commit'],
+                    receipt['stage_commit']).splitlines()) == {'Cargo.toml', 'Cargo.lock'},
+            'Registry stage changed files outside the manifest and lock')
     packages = validate_lock(tomllib.loads((stage / 'Cargo.toml').read_text()),
                              tomllib.loads((stage / 'Cargo.lock').read_text()), 'registry')
     require(set(receipt['dependencies']) == set(GIT), 'Incomplete staged dependency mapping')
@@ -287,7 +288,20 @@ def stage_receipt(stage):
                 'Stage dependency mapping differs from the original Git lock')
         require(packages[name]['version'] == item['version'] and packages[name]['checksum'] == item['checksum'],
                 'Registry stage dependency differs from verified registry identity')
+    projected = tomllib.loads(source_texts['Cargo.toml'])
+    projected['dependencies']['zcall'].pop('git')
+    projected['dependencies']['zcall']['version'] = '=' + packages['zcall']['version']
+    require(projected == tomllib.loads((stage / 'Cargo.toml').read_text()),
+            'Registry stage changed a manifest field outside the dependency source')
     return receipt
+
+
+def publication_paths(stage):
+    output = subprocess.run(['cargo', 'package', '--list', '--locked'], cwd=stage,
+                            check=True, text=True, capture_output=True).stdout
+    names = output.splitlines()
+    require(names and len(names) == len(set(names)), 'Invalid Cargo publication file list')
+    return set(names)
 
 
 def verify_package(stage, archive):
@@ -305,8 +319,10 @@ def verify_package(stage, archive):
                 continue
             require(member.isfile() and member.name[len(prefix):] not in files, 'Non-file or duplicate archive member')
             files[member.name[len(prefix):]] = package.extractfile(member).read()
-    required = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', '.cargo_vcs_info.json', 'docs/registry-source.json'}
+    required = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', '.cargo_vcs_info.json'}
     require(required <= set(files), 'Package is missing registry provenance inputs')
+    require(set(files) == publication_paths(stage),
+            'Package files differ from the complete Cargo publication file list')
     normalized = tomllib.loads(files['Cargo.toml'].decode())
     locked = tomllib.loads(files['Cargo.lock'].decode())
     validate_lock(normalized, locked, 'registry')

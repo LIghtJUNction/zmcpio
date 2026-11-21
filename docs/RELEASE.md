@@ -23,18 +23,20 @@ incompatible published dependencies stop staging; they are not replaced by a
 different version.
 
 Only this directory receives exact registry selectors and registry checksums.
-The original source, dependency lock and branch remain unchanged. The stage
-contains `docs/registry-source.json`, which records the source commit/tree,
-input hashes and the Git-to-registry mapping. A private receipt binds its clean
-local staging commit and file hashes. Registry audit is explicit:
+The original source, dependency lock and branch remain unchanged. A private
+receipt under `.git` records the source commit/tree, input hashes, Git-to-registry
+mapping and clean local staging commit. Only Cargo.toml and Cargo.lock may differ
+from the source parent; no registry-only file is added to the Cargo package.
+Registry audit is explicit:
 `python scripts/audit.py --mode registry`; it requires this receipt and checks
 actual locked metadata again. Running the default audit on a registry checkout
 fails.
 
 CI and release jobs package from the stage using a separate Cargo target
 directory. Package verification checks the clean staging commit, the original
-manifest, the registry lock, the provenance document and all packaged source
-bytes. After publication, the registry checksum must equal the verified archive
+manifest, the registry lock, the complete Cargo publication file list and every
+packaged source byte. Missing or extra package files fail verification. After
+publication, the registry checksum must equal the verified archive
 before the workflow creates the tag and GitHub Release.
 
 ## Starting a release
