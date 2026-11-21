@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
-- Pin zcall 0.4.0 so MCP tools and applications using the current zcall contract share the same Rust types.
+- Align the public zcall re-export with zcall 0.4.1 and zconv 0.4.1. The new minor version marks the public zcall crate-identity change from the 0.3 series. Development retains canonical Git sources; registry packages use the exact matching versions.
 - Keep zcall default features disabled and preserve the allocation-free, no_std protocol core and optional std transports.
+- Verify registry publication from an isolated stage without adding registry-only files to the published source package.
 
 ## 0.4.0 — zcall 0.3 and zconv 0.4 integration
 

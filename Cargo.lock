@@ -4,16 +4,16 @@ version = 4
 
 [[package]]
 name = "zcall"
-version = "0.4.0"
-source = "git+https://github.com/LIghtJUNction/zcall.git#564ede15db66530a6dbb78e8b1f4a85998b6f0d8"
+version = "0.4.1"
+source = "git+https://github.com/LIghtJUNction/zcall.git#abb4a2eff9d5874a089ad1b2989b4a76c4bf4659"
 dependencies = [
  "zconv",
 ]
 
 [[package]]
 name = "zconv"
-version = "0.4.0"
-source = "git+https://github.com/LIghtJUNction/zconv.git#0af1f7eb0766ff0ce9db5cee7c6184eff511a8c1"
+version = "0.4.1"
+source = "git+https://github.com/LIghtJUNction/zconv.git#f78b97b7065bbb7cf9ddfd0914d7f2296bbfe712"
 
 [[package]]
 name = "zmcpio"
