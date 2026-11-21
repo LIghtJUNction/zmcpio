@@ -5,7 +5,7 @@ version = 4
 [[package]]
 name = "zcall"
 version = "0.4.1"
-source = "git+https://github.com/LIghtJUNction/zcall.git#abb4a2eff9d5874a089ad1b2989b4a76c4bf4659"
+source = "git+https://github.com/LIghtJUNction/zcall.git#8dd30a922a0aedbe821f610649b1ab26078d1882"
 dependencies = [
  "zconv",
 ]
