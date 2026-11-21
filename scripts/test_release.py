@@ -75,13 +75,14 @@ class GitOnlyTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name) / 'source'
         self.root.mkdir()
+        # Commit LF fixtures on every platform before testing Git's CRLF checkout.
         for name in ('Cargo.toml', 'Cargo.lock'):
             # Fixture identities do not follow a later release version bump.
             text = (REPOSITORY / name).read_text()
             text = re.sub(r'(?m)^version = "[^\"]+"$', 'version = "0.4.0"', text)
-            (self.root / name).write_text(text)
+            (self.root / name).write_text(text, newline='\n')
         (self.root / 'src').mkdir()
-        (self.root / 'src/lib.rs').write_text('// private source fixture\n')
+        (self.root / 'src/lib.rs').write_text('// private source fixture\n', newline='\n')
         (self.root / 'scripts').mkdir()
         for name in ('audit.py', 'release.py'):
             (self.root / 'scripts' / name).write_bytes((SCRIPTS / name).read_bytes())
