@@ -1,5 +1,6 @@
 """Git-only source releases and an isolated, locked registry projection."""
 import copy
+import contextlib
 import hashlib
 import json
 import os
@@ -9,13 +10,17 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import tomllib
+from types import ModuleType
 import urllib.error
 import urllib.request
 
-from audit import GIT, REGISTRY, EDGES, require, validate_lock
+from audit import GIT, REGISTRY, EDGES, require, validate_lock, validate_metadata
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
+ROOT = pathlib.Path(os.environ.get('RELEASE_SOURCE_ROOT', pathlib.Path(__file__).resolve().parents[1])).resolve()
+PROJECTION_TOOL_SHA = '8df81739982dd60c760d0d47c4f7b02df0e1db74'
+REGISTRY_TOOLCHAIN = '1.100.0'
 SEMVER = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?\Z', re.ASCII)
 
 def parse_version(text):
@@ -65,7 +70,8 @@ def get_json(path, allow_missing=False):
 
 def git(root, *args):
     return subprocess.run(['git', '-C', str(root), *args], check=True,
-                          text=True, capture_output=True).stdout
+                          text=True, capture_output=True,
+                          env={**os.environ, 'GIT_NO_REPLACE_OBJECTS': '1'}).stdout
 
 
 def digest(path):
@@ -77,12 +83,17 @@ def manifest():
 
 
 def source_snapshot(expected_source=None):
+    expected_source = expected_source or os.environ.get('SOURCE_COMMIT')
     head = git(ROOT, 'rev-parse', 'HEAD').strip()
     require(re.fullmatch(r'[0-9a-f]{40}', head), 'Invalid source commit')
     require(expected_source is None or head == expected_source, 'Source HEAD changed')
     require(not git(ROOT, 'status', '--porcelain', '--untracked-files=all'),
             'Release staging requires a clean committed source')
-    texts = {name: git(ROOT, 'show', 'HEAD:' + name) for name in ('Cargo.toml', 'Cargo.lock')}
+    blobs = {name: subprocess.run(['git', '-C', str(ROOT), 'show', head + ':' + name],
+                                  check=True, capture_output=True,
+                                  env={**os.environ, 'GIT_NO_REPLACE_OBJECTS': '1'}).stdout
+             for name in ('Cargo.toml', 'Cargo.lock')}
+    texts = {name: blob.decode().replace('\r\n', '\n') for name, blob in blobs.items()}
     for name, text in texts.items():
         require((ROOT / name).read_text() == text, 'Working source differs from committed input')
     value = tomllib.loads(texts['Cargo.toml'])
@@ -92,8 +103,114 @@ def source_snapshot(expected_source=None):
         parse_version(item['version'])
     require(value['package'].get('repository') == 'https://github.com/LIghtJUNction/zmcpio',
             'Unexpected source repository')
-    return {'commit': head, 'tree': git(ROOT, 'rev-parse', 'HEAD^{tree}').strip(),
-            'texts': texts, 'manifest': value, 'lock': lock, 'packages': packages}
+    return {'commit': head, 'tree': git(ROOT, 'rev-parse', head + '^{tree}').strip(),
+            'texts': texts, 'blobs': blobs, 'manifest': value, 'lock': lock, 'packages': packages}
+
+
+def load_projection_tools():
+    configured = os.environ.get('PROJECT_Z_TOOLS')
+    require(configured, 'PROJECT_Z_TOOLS must identify the pinned Project Z checkout')
+    tools = pathlib.Path(configured).resolve()
+    require(git(tools, 'rev-parse', 'HEAD').strip() == PROJECTION_TOOL_SHA,
+            'Project Z tools are not at the fixed projection revision')
+    relative = 'scripts/release_projection_receipts.py'
+    path = tools / relative
+    expected = subprocess.run(['git', '-C', str(tools), 'show', PROJECTION_TOOL_SHA + ':' + relative],
+                              check=True, capture_output=True,
+                              env={**os.environ, 'GIT_NO_REPLACE_OBJECTS': '1'}).stdout
+    require(path.is_file() and not path.is_symlink() and path.read_bytes() == expected,
+            'Pinned projection verification source was modified')
+    # Compile authenticated source bytes directly; a timestamp-matched .pyc is not trusted.
+    gate = ModuleType('zmcpio_projection_verifier')
+    gate.__file__ = str(path)
+    gate.__package__ = ''
+    exec(compile(expected, str(path), 'exec'), gate.__dict__)
+    projection = gate.load_projection(tools, PROJECTION_TOOL_SHA)
+    return tools, projection, gate
+
+
+def registry_environment():
+    require(os.environ.get('RUSTUP_TOOLCHAIN') == REGISTRY_TOOLCHAIN,
+            'Registry staging and packaging require RUSTUP_TOOLCHAIN=' + REGISTRY_TOOLCHAIN)
+    return {**os.environ, 'GIT_NO_REPLACE_OBJECTS': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
+
+
+@contextlib.contextmanager
+def committed_git_bytes():
+    # git archive otherwise honors the checkout's autocrlf setting. Request the
+    # committed LF bytes without changing the user's index, worktree or config.
+    count = int(os.environ.get('GIT_CONFIG_COUNT', '0'))
+    values = {'GIT_CONFIG_COUNT': str(count + 2),
+              'GIT_CONFIG_KEY_' + str(count): 'core.autocrlf',
+              'GIT_CONFIG_VALUE_' + str(count): 'false',
+              'GIT_CONFIG_KEY_' + str(count + 1): 'core.eol',
+              'GIT_CONFIG_VALUE_' + str(count + 1): 'lf'}
+    original = {key: os.environ.get(key) for key in values}
+    try:
+        os.environ.update(values)
+        yield
+    finally:
+        for key, value in original.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
+def project_source(projection, commit, destination):
+    with committed_git_bytes():
+        return projection.stage(ROOT, commit, 'Cargo.toml', destination, projection.internal_repositories())
+
+
+def require_outside_git(path):
+    probe = subprocess.run(['git', '-C', str(path), 'rev-parse', '--show-toplevel'],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           env={**os.environ, 'GIT_NO_REPLACE_OBJECTS': '1'})
+    require(probe.returncode != 0, 'Registry source must be outside every Git checkout')
+    require(not (path / '.git').exists() and not (path / '.cargo_vcs_info.json').exists(),
+            'Registry source must not provide Git or fabricated Cargo VCS metadata')
+
+
+def validate_registry_dependencies(value, lock, dependencies):
+    packages = validate_lock(value, lock, 'registry')
+    require(set(dependencies) == set(GIT), 'Incomplete staged dependency mapping')
+    for name, dependency in dependencies.items():
+        require(packages[name]['version'] == dependency['version']
+                and packages[name]['checksum'] == dependency['checksum'],
+                'Registry stage dependency differs from verified registry identity')
+    return packages
+
+
+def generate_registry_lock(stage, dependencies):
+    env = registry_environment()
+    subprocess.run(['cargo', 'generate-lockfile', '--manifest-path', str(stage / 'Cargo.toml')],
+                   cwd=stage, check=True, env=env)
+    value = tomllib.loads((stage / 'Cargo.toml').read_text())
+    payload = (stage / 'Cargo.lock').read_bytes()
+    lock = tomllib.loads(payload.decode())
+    validate_registry_dependencies(value, lock, dependencies)
+    metadata = subprocess.run(['cargo', 'metadata', '--locked', '--format-version', '1',
+                               '--manifest-path', str(stage / 'Cargo.toml')],
+                              cwd=stage, check=True, text=True, capture_output=True, env=env).stdout
+    validate_metadata(json.loads(metadata), value, lock, stage, 'registry')
+    require((stage / 'Cargo.lock').read_bytes() == payload, 'Cargo metadata changed the verified registry lock')
+    return payload
+
+
+def compare_projection(stage, expected):
+    files = lambda root: {p.relative_to(root) for p in root.rglob('*') if not p.is_dir() or p.is_symlink()}
+    actual_files, expected_files = files(stage), files(expected)
+    require(actual_files == expected_files | {pathlib.Path('Cargo.lock')},
+            'Registry stage has missing or additional source files')
+    for relative in expected_files:
+        left, right = stage / relative, expected / relative
+        require(left.is_symlink() == right.is_symlink(), 'Registry stage source type changed: ' + str(relative))
+        if right.is_symlink():
+            equal = os.readlink(left) == os.readlink(right)
+        else:
+            equal = (left.is_file() and left.read_bytes() == right.read_bytes()
+                     and (left.stat().st_mode & 0o111) == (right.stat().st_mode & 0o111))
+        require(equal, 'Registry stage differs from the pinned source projection: ' + str(relative))
 
 
 def registry_identity(name, repository, allow_missing=False):
@@ -192,107 +309,88 @@ def apply_version(version):
     (ROOT / 'Cargo.lock').write_text(lock_text)
 
 
+def projection_receipt(snapshot, dependencies, report, stage):
+    return {
+        'schema': 2, 'repository': snapshot['manifest']['package']['repository'],
+        'source_root': str(ROOT.resolve()), 'source_commit': snapshot['commit'],
+        'source_tree': snapshot['tree'],
+        'source_inputs': {name: hashlib.sha256(blob).hexdigest() for name, blob in snapshot['blobs'].items()},
+        'projection_tool_sha': PROJECTION_TOOL_SHA, 'cargo_toolchain': REGISTRY_TOOLCHAIN,
+        'projected_manifest_sha256': report['projected_manifest_sha256'],
+        'registry_lock_sha256': digest(stage / 'Cargo.lock'), 'dependencies': dependencies,
+    }
+
+
 def stage_registry(destination, expected_source=None):
     destination = pathlib.Path(destination).resolve()
     require(destination != ROOT.resolve() and ROOT.resolve() not in destination.parents,
             'Registry staging must be outside the development checkout')
     require(not destination.exists(), 'Stage destination already exists')
+    registry_environment()
     snapshot = source_snapshot(expected_source)
     dependencies = dependency_registry(snapshot)
-    value = copy.deepcopy(snapshot['manifest'])
-    value['dependencies']['zcall'].pop('git')
-    value['dependencies']['zcall']['version'] = '=' + dependencies['zcall']['version']
-    pattern = r'\bgit[ \t]*=[ \t]*"' + re.escape(GIT['zcall']) + r'"'
-    manifest_text, count = re.subn(pattern, 'version = "=' + dependencies['zcall']['version'] + '"',
-                                  snapshot['texts']['Cargo.toml'])
-    require(count == 1 and tomllib.loads(manifest_text) == value, 'Registry projection changed another manifest field')
-    def rewrite_lock(item, text):
-        if item['name'] == 'zmcpio':
-            return text
-        dep = dependencies[item['name']]
-        result = replace_field(text, 'source', item['source'], REGISTRY)
-        return result.replace('source = "' + REGISTRY + '"',
-                              'source = "' + REGISTRY + '"\nchecksum = "' + dep['checksum'] + '"', 1)
-    lock_text = map_lock(snapshot['texts']['Cargo.lock'], rewrite_lock)
-    validate_lock(value, tomllib.loads(lock_text), 'registry')
-    provenance = {
-        'schema': 1, 'repository': snapshot['manifest']['package']['repository'],
-        'source_commit': snapshot['commit'], 'source_tree': snapshot['tree'],
-        'source_inputs': {name: hashlib.sha256(text.encode()).hexdigest() for name, text in snapshot['texts'].items()},
-        'dependencies': dependencies,
-    }
-    # Nothing above creates or modifies a directory. From here on cleanup owns only this new clone.
-    created = False
+    _, projection, gate = load_projection_tools()
+    allowlist = projection.internal_repositories()
+    # The official tool archives the immutable commit and renders its complete
+    # manifests. No Git repository or local staging commit is created.
+    report = project_source(projection, snapshot['commit'], destination)
     try:
-        destination.mkdir(parents=True, exist_ok=False)
-        created = True
-        git(ROOT, 'clone', '--quiet', '--no-hardlinks', '--no-checkout', str(ROOT.resolve()), str(destination))
-        git(destination, 'checkout', '--quiet', '--detach', snapshot['commit'])
-        (destination / 'Cargo.toml').write_text(manifest_text)
-        (destination / 'Cargo.lock').write_text(lock_text)
-        git(destination, 'config', 'user.name', 'Registry staging')
-        git(destination, 'config', 'user.email', 'registry-staging@example.invalid')
-        git(destination, 'add', 'Cargo.toml', 'Cargo.lock')
-        git(destination, '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m',
-            'Stage registry package from ' + snapshot['commit'])
-        receipt = dict(provenance, source_root=str(ROOT.resolve()),
-                       stage_commit=git(destination, 'rev-parse', 'HEAD').strip(),
-                       stage_tree=git(destination, 'rev-parse', 'HEAD^{tree}').strip(),
-                       stage_inputs={p: digest(destination / p) for p in ('Cargo.toml', 'Cargo.lock')})
-        (destination / '.git/zmcpio-registry-stage.json').write_text(json.dumps(receipt, indent=2) + '\n')
-        stage_receipt(destination)
-        # Re-read the original checkout after the projection, including its lock and HEAD.
+        require(not report['remaining_git_dependencies'], 'Registry projection still contains Git dependencies')
+        stage = destination / 'source'
+        require_outside_git(stage)
+        payload = generate_registry_lock(stage, dependencies)
+        gate.validate_registry_lock(payload, snapshot['blobs']['Cargo.lock'],
+                                    snapshot['manifest']['package'], projection, allowlist)
+        receipt = projection_receipt(snapshot, dependencies, report, stage)
+        (destination / 'zmcpio-registry-stage.json').write_text(json.dumps(receipt, indent=2) + '\n', encoding='utf-8')
+        stage_receipt(stage)
         require(source_snapshot(snapshot['commit']) == snapshot, 'Source changed during registry staging')
         return receipt
     except BaseException:
-        if created:
-            shutil.rmtree(destination)
+        # Only the directory just created by the official projection is owned.
+        shutil.rmtree(destination)
         raise
 
 
 def stage_receipt(stage):
-    stage = pathlib.Path(stage).resolve()
-    path = stage / '.git/zmcpio-registry-stage.json'
-    require(path.is_file(), 'This is not an owned registry stage')
+    supplied = pathlib.Path(stage)
+    require(not supplied.is_symlink(), 'Registry source must not be a symlink')
+    stage = supplied.resolve()
+    require(stage.name == 'source' and stage.is_dir(), 'This is not an owned registry stage')
+    require(stage != ROOT.resolve() and ROOT.resolve() not in stage.parents,
+            'Registry staging must be outside the development checkout')
+    require_outside_git(stage)
+    path = stage.parent / 'zmcpio-registry-stage.json'
+    require(path.is_file() and not path.is_symlink(), 'This is not an owned registry stage')
     receipt = json.loads(path.read_text())
-    require(receipt.get('schema') == 1 and receipt.get('repository') == 'https://github.com/LIghtJUNction/zmcpio',
-            'Invalid stage provenance')
-    require(git(stage, 'rev-parse', 'HEAD').strip() == receipt['stage_commit']
-            and git(stage, 'rev-parse', 'HEAD^{tree}').strip() == receipt['stage_tree']
-            and git(stage, 'rev-parse', 'HEAD^').strip() == receipt['source_commit']
-            and not git(stage, 'status', '--porcelain', '--untracked-files=all'),
-            'Registry stage changed after creation')
-    require(set(receipt['stage_inputs']) == {'Cargo.toml', 'Cargo.lock'},
-            'Incomplete registry stage inputs')
-    for name, checksum in receipt['stage_inputs'].items():
-        require(digest(stage / name) == checksum, 'Registry stage input changed')
-    # The public crate must contain the same source files as the Git package.
-    # Keep the projection receipt outside Cargo's publication scope and bind the
-    # complete staging tree to its source parent instead of adding a docs file.
-    require(set(git(stage, 'diff', '--name-only', receipt['source_commit'],
-                    receipt['stage_commit']).splitlines()) == {'Cargo.toml', 'Cargo.lock'},
-            'Registry stage changed files outside the manifest and lock')
-    packages = validate_lock(tomllib.loads((stage / 'Cargo.toml').read_text()),
-                             tomllib.loads((stage / 'Cargo.lock').read_text()), 'registry')
-    require(set(receipt['dependencies']) == set(GIT), 'Incomplete staged dependency mapping')
-    source_texts = {name: git(stage, 'show', receipt['source_commit'] + ':' + name)
-                    for name in ('Cargo.toml', 'Cargo.lock')}
-    require(git(stage, 'rev-parse', receipt['source_commit'] + '^{tree}').strip() == receipt['source_tree']
-            and {name: hashlib.sha256(text.encode()).hexdigest() for name, text in source_texts.items()}
-            == receipt['source_inputs'], 'Stage does not bind the original committed source')
-    source_packages = validate_lock(tomllib.loads(source_texts['Cargo.toml']),
-                                    tomllib.loads(source_texts['Cargo.lock']))
-    for name, item in receipt['dependencies'].items():
-        require(source_packages[name]['version'] == item['version']
-                and source_packages[name]['source'] == item['git_source'],
-                'Stage dependency mapping differs from the original Git lock')
-        require(packages[name]['version'] == item['version'] and packages[name]['checksum'] == item['checksum'],
-                'Registry stage dependency differs from verified registry identity')
-    projected = tomllib.loads(source_texts['Cargo.toml'])
-    projected['dependencies']['zcall'].pop('git')
-    projected['dependencies']['zcall']['version'] = '=' + packages['zcall']['version']
-    require(projected == tomllib.loads((stage / 'Cargo.toml').read_text()),
-            'Registry stage changed a manifest field outside the dependency source')
+    snapshot = source_snapshot()
+    require(receipt.get('source_commit') == snapshot['commit']
+            and receipt.get('source_root') == str(ROOT.resolve()),
+            'Stage does not bind the trusted original Git source')
+    dependencies = dependency_registry(snapshot)
+    require(receipt.get('dependencies') == dependencies,
+            'Stage dependency mapping differs from the original Git lock or live registry')
+    _, projection, gate = load_projection_tools()
+    allowlist = projection.internal_repositories()
+    lock_path = stage / 'Cargo.lock'
+    require(lock_path.is_file() and not lock_path.is_symlink(), 'Registry lock must be a regular file')
+    payload = lock_path.read_bytes()
+    value = tomllib.loads((stage / 'Cargo.toml').read_text())
+    validate_registry_dependencies(value, tomllib.loads(payload.decode()), dependencies)
+    gate.validate_registry_lock(payload, snapshot['blobs']['Cargo.lock'],
+                                snapshot['manifest']['package'], projection, allowlist)
+    # Sidecars are evidence, not authority: reconstruct every staged source byte
+    # from the trusted source and tool commits, even if a sidecar was rewritten.
+    with tempfile.TemporaryDirectory(prefix='zmcpio-projection-check-') as scratch:
+        fresh = pathlib.Path(scratch) / 'projection'
+        report = project_source(projection, snapshot['commit'], fresh)
+        require(not report['remaining_git_dependencies'], 'Registry projection still contains Git dependencies')
+        report_path = stage.parent / 'projection.json'
+        require(report_path.is_file() and not report_path.is_symlink()
+                and json.loads(report_path.read_text()) == report, 'Projection report changed')
+        compare_projection(stage, fresh / 'source')
+        require(receipt == projection_receipt(snapshot, dependencies, report, stage),
+                'Registry stage provenance or inputs changed')
     return receipt
 
 
@@ -320,8 +418,9 @@ def verify_package(stage, archive):
                 continue
             require(member.isfile() and member.name[len(prefix):] not in files, 'Non-file or duplicate archive member')
             files[member.name[len(prefix):]] = package.extractfile(member).read()
-    required = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', '.cargo_vcs_info.json'}
+    required = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock'}
     require(required <= set(files), 'Package is missing registry provenance inputs')
+    require('.cargo_vcs_info.json' not in files, 'Projected package must not contain Cargo VCS metadata')
     require(set(files) == publication_paths(stage),
             'Package files differ from the complete Cargo publication file list')
     normalized = tomllib.loads(files['Cargo.toml'].decode())
@@ -329,19 +428,44 @@ def verify_package(stage, archive):
     validate_lock(normalized, locked, 'registry')
     require(normalized['package']['name'] == name and normalized['package']['version'] == version,
             'Package identity differs from registry stage')
-    require(locked == tomllib.loads((stage / 'Cargo.lock').read_text()), 'Packaged lock changed')
+    registry_lock = (stage / 'Cargo.lock').read_bytes()
+    require(files['Cargo.lock'] == registry_lock, 'Packaged lock changed')
     require(files['Cargo.toml.orig'] == (stage / 'Cargo.toml').read_bytes(), 'Original package manifest changed')
-    vcs = json.loads(files['.cargo_vcs_info.json'])
-    require(vcs.get('git', {}).get('sha1') == receipt['stage_commit'] and vcs['git'].get('dirty', False) is False
-            and vcs.get('path_in_vcs', '') == '', 'Package VCS identity is not the clean registry stage')
     for path, contents in files.items():
-        if path not in ('Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', '.cargo_vcs_info.json'):
+        if path not in ('Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock'):
             require((stage / path).is_file() and (stage / path).read_bytes() == contents,
                     'Packaged source differs from registry stage: ' + path)
-    result = {'source_commit': receipt['source_commit'], 'stage_commit': receipt['stage_commit'],
-              'package': name, 'version': version, 'archive': str(pathlib.Path(archive).resolve()),
-              'bytes': pathlib.Path(archive).stat().st_size, 'sha256': digest(archive)}
-    (stage / '.git/zmcpio-registry-package.json').write_text(json.dumps(result, indent=2) + '\n')
+    # Compare an independent official projection and Cargo rebuild with the
+    # candidate digest captured before rebuilding. Never rebuild over candidate.
+    registry_environment()
+    archive = pathlib.Path(archive).resolve()
+    archive_sha256 = digest(archive)
+    _, projection, gate = load_projection_tools()
+    gate.archive_identity(archive, name, version)
+    with tempfile.TemporaryDirectory(prefix='zmcpio-package-check-') as scratch:
+        work = pathlib.Path(scratch)
+        report = project_source(projection, receipt['source_commit'], work / 'projection')
+        require(not report['remaining_git_dependencies'], 'Rebuild projection still contains Git dependencies')
+        source = work / 'projection' / 'source'
+        require_outside_git(source)
+        (source / 'Cargo.lock').write_bytes(registry_lock)
+        configured = os.environ.get('REGISTRY_REBUILD_TARGET')
+        target = pathlib.Path(configured).resolve() if configured else work / 'build'
+        rebuilt = target / 'package' / (name + '-' + version + '.crate')
+        require(rebuilt.resolve() != archive, 'Rebuild target must not overwrite the candidate archive')
+        gate.rebuild_package(source / 'Cargo.toml', target)
+        require((source / 'Cargo.lock').read_bytes() == registry_lock, 'Packaging modified the verified registry lock')
+        gate.archive_identity(rebuilt, name, version)
+        require(digest(rebuilt) == archive_sha256, 'Official projection rebuild differs from the candidate archive')
+    require(digest(archive) == archive_sha256, 'Candidate archive changed during verification')
+    result = {'schema': 2, 'status': 'SOURCE_PROJECTION_REBUILT',
+              'source_commit': receipt['source_commit'], 'projection_tool_sha': PROJECTION_TOOL_SHA,
+              'registry_lock_sha256': receipt['registry_lock_sha256'], 'cargo_toolchain': REGISTRY_TOOLCHAIN,
+              'package': name, 'version': version, 'archive': str(archive),
+              'bytes': archive.stat().st_size, 'sha256': archive_sha256}
+    # This build proof is not an independently trusted consumer receipt. A
+    # consumer must establish its receipt pin independently after publication.
+    (stage.parent / 'zmcpio-registry-package.json').write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     return result
 
 

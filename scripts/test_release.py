@@ -23,6 +23,9 @@ import contextlib
 import copy
 import importlib.util
 import io
+import gzip
+import hashlib
+import tarfile
 import json
 import os
 import pathlib
@@ -45,7 +48,7 @@ REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
 class PublicationPathTests(unittest.TestCase):
     def test_native_paths_match_posix_archive_names(self):
         expected = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock',
-                    '.cargo_vcs_info.json', 'src/lib.rs', 'tests/transport/stdio.rs'}
+                    'src/lib.rs', 'tests/transport/stdio.rs'}
         for path_type, separator, newline in (
             (pathlib.PurePosixPath, '/', '\n'),
             (pathlib.PureWindowsPath, '\\', '\r\n'),
@@ -68,6 +71,54 @@ class PublicationPathTests(unittest.TestCase):
                                    return_value=subprocess.CompletedProcess([], 0, stdout=output)):
                 with self.assertRaisesRegex(ValueError, 'Invalid Cargo publication file list'):
                     release.publication_paths('stage')
+
+
+class ProjectionFixture:
+    """A functional projection dependency for offline unit tests.
+
+    Release CI supplies PROJECT_Z_TOOLS and uses the real pinned implementation
+    instead. Both paths archive actual Git objects; only Cargo and HTTP are fake.
+    """
+    def internal_repositories(self):
+        return set(GIT.values())
+
+    def stage(self, repo, commit, manifest, output, allowlist):
+        output.mkdir()
+        source = output / 'source'
+        source.mkdir()
+        payload = subprocess.check_output(['git', '-C', str(repo), 'archive', '--format=tar', commit])
+        with tarfile.open(fileobj=io.BytesIO(payload), mode='r:') as archive:
+            archive.extractall(source, filter='data')
+        lock = (source / 'Cargo.lock').read_bytes()
+        version = next(p['version'] for p in tomllib.loads(lock.decode())['package'] if p['name'] == 'zcall')
+        path = source / manifest
+        projected = path.read_text().replace('git = "' + GIT['zcall'] + '"', 'version = "=' + version + '"')
+        # Distinct whole-projection output detects code that substitutes its own
+        # manifest rewriting instead of using the selected projection tool.
+        path.write_text('# functional projection fixture\n' + projected)
+        (source / 'Cargo.lock').unlink()
+        report = {'schema_version': 1, 'source_commit': commit, 'workspace_manifest': manifest,
+                  'source_lock_sha256': hashlib.sha256(lock).hexdigest(),
+                  'projected_manifest_sha256': {manifest: release.digest(path)},
+                  'remaining_git_dependencies': []}
+        (output / 'projection.json').write_text(json.dumps(report))
+        return report
+
+    def validate_registry_lock(self, payload, source_lock, identity, projection, allowlist):
+        original = {p['name']: p for p in tomllib.loads(source_lock.decode())['package']}
+        actual = {p['name']: p for p in tomllib.loads(payload.decode())['package']}
+        if set(actual) != set(original) or any(actual[n]['version'] != original[n]['version'] for n in original):
+            raise ValueError('Registry graph differs from committed identities')
+
+    def archive_identity(self, path, name, version):
+        with tarfile.open(path, 'r:gz') as archive:
+            if name + '-' + version + '/.cargo_vcs_info.json' in archive.getnames():
+                raise ValueError('Cargo VCS metadata is forbidden')
+            value = tomllib.loads(archive.extractfile(name + '-' + version + '/Cargo.toml').read().decode())
+        if value['package']['name'] != name or value['package']['version'] != version:
+            raise ValueError('Archive identity mismatch')
+        return value['package']
+
 
 class GitOnlyTests(unittest.TestCase):
     def setUp(self):
@@ -96,7 +147,50 @@ class GitOnlyTests(unittest.TestCase):
         self.patch_root = mock.patch.object(release, 'ROOT', self.root)
         self.patch_root.start()
         self.addCleanup(self.patch_root.stop)
-        paths = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', '.cargo_vcs_info.json', 'src/lib.rs'}
+        self.patch_env = mock.patch.dict(os.environ, {'RUSTUP_TOOLCHAIN': release.REGISTRY_TOOLCHAIN,
+                                                     'PYTHONDONTWRITEBYTECODE': '1'})
+        self.patch_env.start()
+        self.addCleanup(self.patch_env.stop)
+        for key in ('SOURCE_COMMIT', 'REGISTRY_REBUILD_TARGET'):
+            os.environ.pop(key, None)
+        if os.environ.get('PROJECT_Z_TOOLS'):
+            self.tools, self.projection, self.gate = release.load_projection_tools()
+        else:
+            self.tools = None
+            self.projection = ProjectionFixture()
+            self.gate = self.projection
+        loader = mock.patch.object(release, 'load_projection_tools',
+                                   return_value=(self.tools, self.projection, self.gate))
+        loader.start()
+        self.addCleanup(loader.stop)
+        builder = mock.patch.object(self.gate, 'rebuild_package', self.rebuild, create=True)
+        builder.start()
+        self.addCleanup(builder.stop)
+        network = mock.patch.object(release, 'get_json', side_effect=self.registry)
+        network.start()
+        self.addCleanup(network.stop)
+        real_run = subprocess.run
+        def cargo_boundary(argv, *args, **kwargs):
+            if argv[0] != 'cargo':
+                return real_run(argv, *args, **kwargs)
+            stage = pathlib.Path(kwargs['cwd'])
+            if argv[1] == 'generate-lockfile':
+                text = (self.root / 'Cargo.lock').read_text()
+                def registry_row(item, row):
+                    if item['name'] == 'zmcpio':
+                        return row
+                    checksum = ('a' if item['name'] == 'zcall' else 'b') * 64
+                    return row.replace(item['source'], REGISTRY).replace(
+                        'source = "' + REGISTRY + '"', 'source = "' + REGISTRY + '"\nchecksum = "' + checksum + '"')
+                (stage / 'Cargo.lock').write_text(release.map_lock(text, registry_row), newline='\n')
+                return subprocess.CompletedProcess(argv, 0)
+            if argv[1] == 'metadata':
+                return subprocess.CompletedProcess(argv, 0, stdout=json.dumps(self.metadata('registry', stage)))
+            self.fail('Unexpected Cargo fixture command: ' + repr(argv))
+        runner = mock.patch.object(release.subprocess, 'run', side_effect=cargo_boundary)
+        runner.start()
+        self.addCleanup(runner.stop)
+        paths = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock', 'src/lib.rs'}
         listing = mock.patch.object(release, 'publication_paths', return_value=paths)
         listing.start()
         self.addCleanup(listing.stop)
@@ -111,8 +205,9 @@ class GitOnlyTests(unittest.TestCase):
     def lock(self):
         return tomllib.loads((self.root / 'Cargo.lock').read_text())
 
-    def metadata(self, mode='development'):
-        lock = self.lock()
+    def metadata(self, mode='development', root=None):
+        root = root or self.root
+        lock = tomllib.loads((root / 'Cargo.lock').read_text())
         packages = []
         for item in lock['package']:
             name = item['name']
@@ -124,7 +219,7 @@ class GitOnlyTests(unittest.TestCase):
                 'features': [], 'target': None, 'registry': None,
             } for dep in deps]
             packages.append({'name': name, 'version': item['version'], 'source': item.get('source'),
-                             'manifest_path': str(self.root / 'Cargo.toml') if name == 'zmcpio'
+                             'manifest_path': str(root / 'Cargo.toml') if name == 'zmcpio'
                                               else str(pathlib.Path(self.temp.name) / name / 'Cargo.toml'),
                              'id': name, 'dependencies': dependencies})
         return {'packages': packages, 'resolve': {'nodes': [
@@ -267,9 +362,9 @@ class GitOnlyTests(unittest.TestCase):
 
     def test_stage_is_registry_only_and_leaves_source_untouched(self):
         before = {name: (self.root / name).read_bytes() for name in ('Cargo.toml', 'Cargo.lock', 'src/lib.rs')}
-        dest = pathlib.Path(self.temp.name) / 'registry'
+        dest = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            receipt = release.stage_registry(dest, expected_source=self.head)
+            receipt = release.stage_registry(dest.parent, expected_source=self.head)
         self.assertEqual(self.git('rev-parse', 'HEAD').strip(), self.head)
         self.assertEqual(self.git('status', '--porcelain'), '')
         self.assertEqual(before, {name: (self.root / name).read_bytes() for name in before})
@@ -284,13 +379,13 @@ class GitOnlyTests(unittest.TestCase):
                 self.assertEqual(p['source'], REGISTRY)
                 self.assertEqual(p['checksum'], ('a' if p['name'] == 'zcall' else 'b')*64)
         self.assertEqual(receipt['source_commit'], self.head)
-        self.assertEqual(release.stage_receipt(dest)['stage_commit'], receipt['stage_commit'])
+        self.assertEqual(release.stage_receipt(dest), receipt)
         self.assertEqual(receipt['dependencies']['zcall']['git_source'],
                          next(p for p in self.lock()['package'] if p['name'] == 'zcall')['source'])
         self.assertFalse((dest / 'docs/registry-source.json').exists())
-        self.assertEqual(set(release.git(dest, 'diff', '--name-only', self.head,
-                                        receipt['stage_commit']).splitlines()),
-                         {'Cargo.toml', 'Cargo.lock'})
+        self.assertFalse((dest / '.git').exists())
+        self.assertEqual(receipt['projection_tool_sha'], release.PROJECTION_TOOL_SHA)
+        self.assertTrue((dest.parent / 'projection.json').is_file())
 
     def test_stage_rejects_inside_source_existing_destination_and_drift(self):
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
@@ -337,18 +432,18 @@ class GitOnlyTests(unittest.TestCase):
             self.assertFalse(dest.exists())
 
     def test_stage_tampering_and_source_change_fail_closed(self):
-        dest = pathlib.Path(self.temp.name) / 'registry'
+        dest = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(dest)
+            release.stage_registry(dest.parent)
         (dest / 'Cargo.lock').write_text((dest / 'Cargo.lock').read_text().replace('a'*64, 'c'*64))
         with self.assertRaises(ValueError):
             release.stage_receipt(dest)
         self.assertEqual(self.git('status', '--porcelain'), '')
 
     def test_concurrent_main_or_registry_source_cannot_be_pushed(self):
-        dest = pathlib.Path(self.temp.name) / 'registry'
+        dest = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(dest)
+            release.stage_registry(dest.parent)
         original = release.git
         called = []
         def concurrent(root, *args):
@@ -367,31 +462,33 @@ class GitOnlyTests(unittest.TestCase):
             release.push_source(dest, self.head, 'main')
 
 
-    def make_archive(self, stage, changes=None, exclude=()):
-        import tarfile
+    def make_archive(self, stage, changes=None, exclude=(), archive=None):
         value = tomllib.loads((stage / 'Cargo.toml').read_text())
-        receipt = release.stage_receipt(stage)
         content = {name: (stage / name).read_bytes() for name in (
             'Cargo.toml', 'Cargo.lock', 'src/lib.rs')}
         content['Cargo.toml.orig'] = content['Cargo.toml']
-        content['.cargo_vcs_info.json'] = json.dumps({
-            'git': {'sha1': receipt['stage_commit'], 'dirty': False}, 'path_in_vcs': ''}).encode()
         content.update(changes or {})
         for name in exclude:
             content.pop(name)
-        archive = pathlib.Path(self.temp.name) / 'fixture.crate'
+        archive = archive or pathlib.Path(self.temp.name) / 'fixture.crate'
+        archive.parent.mkdir(parents=True, exist_ok=True)
         prefix = value['package']['name'] + '-' + value['package']['version'] + '/'
-        with tarfile.open(archive, 'w:gz') as target:
-            for name, data in content.items():
-                info = tarfile.TarInfo(prefix + name)
-                info.size = len(data)
-                target.addfile(info, io.BytesIO(data))
+        with archive.open('wb') as raw, gzip.GzipFile(fileobj=raw, filename='', mode='wb', mtime=0) as compressed:
+            with tarfile.open(fileobj=compressed, mode='w') as target:
+                for name, data in sorted(content.items()):
+                    info = tarfile.TarInfo(prefix + name)
+                    info.size = len(data)
+                    target.addfile(info, io.BytesIO(data))
         return archive
 
+    def rebuild(self, manifest, target):
+        value = tomllib.loads(manifest.read_text())['package']
+        self.make_archive(manifest.parent, archive=target / 'package' / (value['name'] + '-' + value['version'] + '.crate'))
+
     def test_package_provenance_and_published_checksum(self):
-        stage = pathlib.Path(self.temp.name) / 'registry'
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(stage)
+            release.stage_registry(stage.parent)
         archive = self.make_archive(stage)
         checked = release.verify_package(stage, archive)
         self.assertEqual(checked['sha256'], release.digest(archive))
@@ -414,9 +511,9 @@ class GitOnlyTests(unittest.TestCase):
                     release.verify_published(stage, archive)
 
     def test_packaged_sources_and_registry_inputs_cannot_drift(self):
-        stage = pathlib.Path(self.temp.name) / 'registry'
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(stage)
+            release.stage_registry(stage.parent)
         changes = [
             {'src/lib.rs': b'// changed source\\n'},
             {'Cargo.toml.orig': b'[package]\\nname="different"\\n'},
@@ -430,9 +527,9 @@ class GitOnlyTests(unittest.TestCase):
         self.assertEqual(self.git('status', '--porcelain'), '')
 
     def test_archive_cannot_omit_an_included_source_file(self):
-        stage = pathlib.Path(self.temp.name) / 'registry'
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(stage)
+            release.stage_registry(stage.parent)
         with self.assertRaisesRegex(ValueError, 'complete Cargo publication file list'):
             release.verify_package(stage, self.make_archive(stage, exclude=('src/lib.rs',)))
 
@@ -448,10 +545,10 @@ class GitOnlyTests(unittest.TestCase):
 
 
     def test_stage_mapping_is_checked_against_original_git_objects(self):
-        stage = pathlib.Path(self.temp.name) / 'registry'
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(stage)
-        receipt_path = stage / '.git/zmcpio-registry-stage.json'
+            release.stage_registry(stage.parent)
+        receipt_path = stage.parent / 'zmcpio-registry-stage.json'
         receipt = json.loads(receipt_path.read_text())
         receipt['dependencies']['zcall']['git_source'] = 'git+' + GIT['zcall'] + '#' + 'f'*40
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
@@ -459,20 +556,136 @@ class GitOnlyTests(unittest.TestCase):
             release.stage_receipt(stage)
 
     def test_registry_stage_cannot_add_packaged_provenance_or_change_source(self):
-        stage = pathlib.Path(self.temp.name) / 'registry'
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            release.stage_registry(stage)
+            release.stage_registry(stage.parent)
         (stage / 'src/lib.rs').write_text('// changed after projection\n')
-        release.git(stage, 'add', 'src/lib.rs')
-        release.git(stage, '-c', 'commit.gpgsign=false', 'commit', '--amend', '--no-edit', '--quiet')
-        receipt_path = stage / '.git/zmcpio-registry-stage.json'
+        receipt_path = stage.parent / 'zmcpio-registry-stage.json'
         receipt = json.loads(receipt_path.read_text())
-        receipt['stage_commit'] = release.git(stage, 'rev-parse', 'HEAD').strip()
-        receipt['stage_tree'] = release.git(stage, 'rev-parse', 'HEAD^{tree}').strip()
+        receipt['source_tree'] = 'f' * 40
         receipt_path.write_text(json.dumps(receipt, indent=2) + '\n')
-        with self.assertRaisesRegex(ValueError, 'outside the manifest and lock'):
+        with self.assertRaisesRegex(ValueError, 'pinned source projection'):
             release.stage_receipt(stage)
 
+
+    def test_forged_sidecar_cannot_authorize_changed_lock(self):
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
+        release.stage_registry(stage.parent)
+        lock = stage / 'Cargo.lock'
+        lock.write_bytes(lock.read_bytes().replace(b'a' * 64, b'c' * 64))
+        path = stage.parent / 'zmcpio-registry-stage.json'
+        receipt = json.loads(path.read_text())
+        receipt['registry_lock_sha256'] = release.digest(lock)
+        receipt['dependencies']['zcall']['checksum'] = 'c' * 64
+        path.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(ValueError, 'live registry'):
+            release.stage_receipt(stage)
+
+    def test_changed_source_head_and_tool_identity_fail(self):
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
+        release.stage_registry(stage.parent)
+        path = stage.parent / 'zmcpio-registry-stage.json'
+        receipt = json.loads(path.read_text())
+        receipt['projection_tool_sha'] = 'f' * 40
+        path.write_text(json.dumps(receipt))
+        with self.assertRaisesRegex(ValueError, 'provenance or inputs'):
+            release.stage_receipt(stage)
+        receipt['projection_tool_sha'] = release.PROJECTION_TOOL_SHA
+        path.write_text(json.dumps(receipt))
+        (self.root / 'src/lib.rs').write_text('// new committed source\n')
+        self.git('add', 'src/lib.rs')
+        self.git('commit', '-q', '-m', 'concurrent source')
+        with self.assertRaisesRegex(ValueError, 'trusted original Git source'):
+            release.stage_receipt(stage)
+
+    def test_stage_rejects_added_source_and_manufactured_vcs(self):
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
+        release.stage_registry(stage.parent)
+        for name in ('src/addition.rs', '.cargo_vcs_info.json'):
+            path = stage / name
+            path.write_text('{}')
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                release.stage_receipt(stage)
+            path.unlink()
+        if os.name != 'nt':
+            path = stage / 'src/lib.rs'
+            path.chmod(path.stat().st_mode ^ 0o100)
+            with self.assertRaisesRegex(ValueError, 'pinned source projection'):
+                release.stage_receipt(stage)
+
+    def test_stage_cannot_be_inside_an_unrelated_git_checkout(self):
+        foreign = pathlib.Path(self.temp.name) / 'unrelated'
+        foreign.mkdir()
+        subprocess.run(['git', '-C', str(foreign), 'init', '-q'], check=True)
+        with self.assertRaisesRegex(ValueError, 'outside every Git checkout'):
+            release.stage_registry(foreign / 'stage')
+        self.assertFalse((foreign / 'stage').exists())
+        self.assertTrue((foreign / '.git').is_dir())
+
+    def test_registry_toolchain_is_explicit_and_source_config_unchanged(self):
+        stage = pathlib.Path(self.temp.name) / 'registry'
+        with mock.patch.dict(os.environ, {'RUSTUP_TOOLCHAIN': '1.99.1'}):
+            with self.assertRaisesRegex(ValueError, 'RUSTUP_TOOLCHAIN=1.100.0'):
+                release.stage_registry(stage)
+        self.assertFalse(stage.exists())
+        with mock.patch.dict(os.environ, {'GIT_CONFIG_COUNT': '1', 'GIT_CONFIG_KEY_0': 'color.ui',
+                                          'GIT_CONFIG_VALUE_0': 'false'}):
+            before = dict(os.environ)
+            release.stage_registry(stage)
+            self.assertEqual(dict(os.environ), before)
+        self.assertEqual(self.git('config', 'core.autocrlf').strip(), 'false')
+
+    def test_generated_lock_and_real_metadata_validation_are_required(self):
+        original = subprocess.run
+        def changed_metadata(argv, *args, **kwargs):
+            result = original(argv, *args, **kwargs)
+            if argv[:2] == ['cargo', 'metadata']:
+                data = json.loads(result.stdout)
+                data['resolve']['nodes'][0]['features'] = ['unexpected']
+                result.stdout = json.dumps(data)
+            return result
+        with mock.patch.object(subprocess, 'run', side_effect=changed_metadata):
+            with self.assertRaisesRegex(ValueError, 'features must remain disabled'):
+                release.stage_registry(pathlib.Path(self.temp.name) / 'registry')
+        self.assertFalse((pathlib.Path(self.temp.name) / 'registry').exists())
+
+    def test_rebuild_is_independent_and_rejects_different_archive_or_lock(self):
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
+        release.stage_registry(stage.parent)
+        archive = self.make_archive(stage)
+        def different_archive(manifest, target):
+            self.rebuild(manifest, target)
+            path = target / 'package' / 'zmcpio-0.4.0.crate'
+            path.write_bytes(path.read_bytes() + b'tampered')
+        with mock.patch.object(self.gate, 'rebuild_package', side_effect=different_archive):
+            with self.assertRaisesRegex(ValueError, 'rebuild differs'):
+                release.verify_package(stage, archive)
+        def changed_lock(manifest, target):
+            self.rebuild(manifest, target)
+            lock = manifest.parent / 'Cargo.lock'
+            lock.write_bytes(lock.read_bytes() + b'\n')
+        with mock.patch.object(self.gate, 'rebuild_package', side_effect=changed_lock):
+            with self.assertRaisesRegex(ValueError, 'Packaging modified'):
+                release.verify_package(stage, archive)
+
+    def test_rebuild_target_cannot_overwrite_candidate(self):
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
+        release.stage_registry(stage.parent)
+        target = pathlib.Path(self.temp.name) / 'build'
+        archive = self.make_archive(stage, archive=target / 'package' / 'zmcpio-0.4.0.crate')
+        before = archive.read_bytes()
+        with mock.patch.dict(os.environ, {'REGISTRY_REBUILD_TARGET': str(target)}):
+            with self.assertRaisesRegex(ValueError, 'must not overwrite'):
+                release.verify_package(stage, archive)
+        self.assertEqual(archive.read_bytes(), before)
+
+    def test_normalized_manifest_tampering_is_caught_by_rebuild(self):
+        stage = pathlib.Path(self.temp.name) / 'registry' / 'source'
+        release.stage_registry(stage.parent)
+        manifest = (stage / 'Cargo.toml').read_bytes()
+        archive = self.make_archive(stage, {'Cargo.toml': manifest + b'\n# injected normalization\n'})
+        with self.assertRaisesRegex(ValueError, 'rebuild differs'):
+            release.verify_package(stage, archive)
 
     def crlf_checkout(self):
         clone = pathlib.Path(self.temp.name) / 'crlf checkout'
@@ -505,16 +718,61 @@ class GitOnlyTests(unittest.TestCase):
         import hashlib
         before = self.crlf_checkout()
         snapshot = release.source_snapshot(self.head)
-        stage = pathlib.Path(self.temp.name) / 'registry stage'
+        stage = pathlib.Path(self.temp.name) / 'registry stage' / 'source'
         with mock.patch.object(release, 'get_json', side_effect=self.registry):
-            receipt = release.stage_registry(stage, expected_source=self.head)
+            receipt = release.stage_registry(stage.parent, expected_source=self.head)
         self.assertEqual(before, {name: (self.root / name).read_bytes() for name in before})
         self.assertEqual(release.source_snapshot(self.head), snapshot)
         for name in ('Cargo.toml', 'Cargo.lock'):
             committed = subprocess.check_output(['git', '-C', str(self.root), 'show', 'HEAD:' + name])
             self.assertEqual(receipt['source_inputs'][name], hashlib.sha256(committed).hexdigest())
-        self.assertEqual(release.stage_receipt(stage)['stage_commit'], receipt['stage_commit'])
+        self.assertEqual(release.stage_receipt(stage), receipt)
+        self.assertEqual(self.git('config', 'core.autocrlf').strip(), 'true')
 
+
+class ToolLoadingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = pathlib.Path(self.temp.name)
+        self.path = self.root / 'scripts/release_projection_receipts.py'
+        self.path.parent.mkdir()
+        self.path.write_text('def load_projection(root, sha):\n    return ("authenticated source", str(root), sha)\n', newline='\n')
+        for args in (('init', '-q'), ('config', 'user.name', 'Fixture'),
+                     ('config', 'user.email', 'fixture@example.invalid'), ('config', 'core.autocrlf', 'false'),
+                     ('add', '.'), ('-c', 'commit.gpgsign=false', 'commit', '-q', '-m', 'immutable tool')):
+            subprocess.run(['git', '-C', str(self.root), *args], check=True, capture_output=True)
+        self.sha = subprocess.check_output(['git', '-C', str(self.root), 'rev-parse', 'HEAD']).decode().strip()
+        patch = mock.patch.object(release, 'PROJECTION_TOOL_SHA', self.sha)
+        patch.start()
+        self.addCleanup(patch.stop)
+        patch = mock.patch.dict(os.environ, {'PROJECT_Z_TOOLS': str(self.root)})
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_tool_sha_and_authenticated_python_bytes_are_required(self):
+        self.assertEqual(release.load_projection_tools()[1][0], 'authenticated source')
+        with mock.patch.object(release, 'PROJECTION_TOOL_SHA', 'f' * 40):
+            with self.assertRaisesRegex(ValueError, 'fixed projection revision'):
+                release.load_projection_tools()
+        self.path.write_text('raise RuntimeError("untrusted modified source")\n')
+        with self.assertRaisesRegex(ValueError, 'source was modified'):
+            release.load_projection_tools()
+
+    def test_timestamp_matched_untracked_pyc_cannot_replace_verified_source(self):
+        import importlib._bootstrap_external
+        original = self.path.read_bytes()
+        stat = self.path.stat()
+        evil = compile('raise RuntimeError("untrusted pyc executed")', str(self.path), 'exec')
+        cache = pathlib.Path(importlib.util.cache_from_source(str(self.path)))
+        cache.parent.mkdir(exist_ok=True)
+        cache.write_bytes(importlib._bootstrap_external._code_to_timestamp_pyc(evil, int(stat.st_mtime), len(original)))
+        # Show that ordinary path importing would accept the forged cache.
+        spec = importlib.util.spec_from_file_location('untrusted_fixture', self.path)
+        with self.assertRaisesRegex(RuntimeError, 'untrusted pyc executed'):
+            spec.loader.exec_module(importlib.util.module_from_spec(spec))
+        self.assertEqual(release.load_projection_tools()[1][0], 'authenticated source')
+        self.assertEqual(self.path.read_bytes(), original)
 
 if __name__ == '__main__':
     unittest.main()

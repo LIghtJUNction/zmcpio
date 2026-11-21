@@ -23,6 +23,13 @@ permissions:
 concurrency:
   group: release-${{ github.repository }}
   cancel-in-progress: false
+defaults:
+  run:
+    working-directory: source
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  RELEASE_SOURCE_ROOT: ${{ github.workspace }}/source
+  PROJECT_Z_TOOLS: ${{ github.workspace }}/project-z-tools
 jobs:
   plan:
     if: github.repository == 'LIghtJUNction/zmcpio' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
@@ -32,7 +39,38 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          path: source
           persist-credentials: false
+      - name: Check out the immutable Project Z projection tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: LIghtJUNction/project-z
+          ref: 8df81739982dd60c760d0d47c4f7b02df0e1db74
+          path: project-z-tools
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.gitmodules
+            /scripts/cargo_versions.py
+            /scripts/release_projection.py
+            /scripts/release_projection_receipts.py
+      - name: Initialize isolated registry paths and exact tool bytes
+        shell: python
+        run: |
+          import os
+          import subprocess
+          from pathlib import Path
+          tools = os.environ["PROJECT_Z_TOOLS"]
+          subprocess.run(["git", "-C", tools, "config", "core.autocrlf", "false"], check=True)
+          subprocess.run(["git", "-C", tools, "checkout-index", "--force", "--all"], check=True)
+          base = Path(os.environ["RUNNER_TEMP"])
+          paths = {"REGISTRY_BUNDLE": base / "zmcpio-registry",
+                   "REGISTRY_STAGE": base / "zmcpio-registry" / "source",
+                   "REGISTRY_TARGET": base / "zmcpio-registry-target",
+                   "REGISTRY_REBUILD_TARGET": base / "zmcpio-registry-rebuild-target"}
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              for key, value in paths.items():
+                  env.write(f"{key}={value}\n")
       - run: python scripts/test_release.py
       - id: plan
         env:
@@ -56,19 +94,43 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       VERSION: ${{ needs.plan.outputs.version }}
+      RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
       ZMCPIO_BENCH_SMOKE: '1'
     steps:
-      - name: Initialize isolated registry paths
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          persist-credentials: false
+      - name: Check out the immutable Project Z projection tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: LIghtJUNction/project-z
+          ref: 8df81739982dd60c760d0d47c4f7b02df0e1db74
+          path: project-z-tools
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.gitmodules
+            /scripts/cargo_versions.py
+            /scripts/release_projection.py
+            /scripts/release_projection_receipts.py
+      - name: Initialize isolated registry paths and exact tool bytes
         shell: python
         run: |
           import os
+          import subprocess
           from pathlib import Path
+          tools = os.environ["PROJECT_Z_TOOLS"]
+          subprocess.run(["git", "-C", tools, "config", "core.autocrlf", "false"], check=True)
+          subprocess.run(["git", "-C", tools, "checkout-index", "--force", "--all"], check=True)
+          base = Path(os.environ["RUNNER_TEMP"])
+          paths = {"REGISTRY_BUNDLE": base / "zmcpio-registry",
+                   "REGISTRY_STAGE": base / "zmcpio-registry" / "source",
+                   "REGISTRY_TARGET": base / "zmcpio-registry-target",
+                   "REGISTRY_REBUILD_TARGET": base / "zmcpio-registry-rebuild-target"}
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
-              env.write(f"REGISTRY_STAGE={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry'}\n")
-              env.write(f"REGISTRY_TARGET={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry-target'}\n")
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
+              for key, value in paths.items():
+                  env.write(f"{key}={value}\n")
       - run: |
           rustup toolchain install ${{ matrix.rust }} --profile minimal --component rustfmt,clippy
           rustup default ${{ matrix.rust }}
@@ -80,6 +142,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add Cargo.toml Cargo.lock
           if ! git diff --cached --quiet; then git commit -m "ci: validate $VERSION"; fi
+          printf 'SOURCE_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --all-targets --locked
@@ -96,27 +159,43 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check --no-default-features --locked --target wasm32-unknown-unknown
-      - name: Prepare separate registry source from the committed Git lock
-        run: python scripts/release.py stage "${{ env.REGISTRY_STAGE }}"
+      - name: Install the registry packaging toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal
+      - name: Prepare the pinned Project Z registry projection
+        env:
+          RUSTUP_TOOLCHAIN: '1.100.0'
+          CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+        run: python scripts/release.py stage "${{ env.REGISTRY_BUNDLE }}"
       - name: Audit the exact registry closure
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
         run: python scripts/audit.py --mode registry
       - name: Package and verify registry provenance
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
+        shell: python
         run: |
-          cargo package --locked
-          python scripts/release.py verify-package "${{ env.REGISTRY_STAGE }}"
+          import os
+          import subprocess
+          subprocess.run(["cargo", "package", "--locked", "--registry", "crates-io"], check=True)
+          subprocess.run(["python", os.path.join(os.environ["RELEASE_SOURCE_ROOT"], "scripts", "release.py"),
+                          "verify-package", os.environ["REGISTRY_STAGE"]], check=True)
       - name: Dry-run the registry package
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
+        shell: python
         run: |
-          python scripts/release.py verify-stage "${{ env.REGISTRY_STAGE }}"
-          cargo publish --dry-run --locked
+          import os
+          import subprocess
+          subprocess.run(["python", os.path.join(os.environ["RELEASE_SOURCE_ROOT"], "scripts", "release.py"),
+                          "verify-stage", os.environ["REGISTRY_STAGE"]], check=True)
+          subprocess.run(["cargo", "publish", "--dry-run", "--locked", "--registry", "crates-io"], check=True)
   publish:
     if: github.event_name == 'push' || inputs.publish
     needs: [plan, validate]
@@ -126,21 +205,44 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+      RUSTUP_TOOLCHAIN: '1.100.0'
       ZMCPIO_BENCH_SMOKE: '1'
     steps:
-      - name: Initialize isolated registry paths
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: source
+          fetch-depth: 0
+      - name: Check out the immutable Project Z projection tools
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: LIghtJUNction/project-z
+          ref: 8df81739982dd60c760d0d47c4f7b02df0e1db74
+          path: project-z-tools
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /.gitmodules
+            /scripts/cargo_versions.py
+            /scripts/release_projection.py
+            /scripts/release_projection_receipts.py
+      - name: Initialize isolated registry paths and exact tool bytes
         shell: python
         run: |
           import os
+          import subprocess
           from pathlib import Path
+          tools = os.environ["PROJECT_Z_TOOLS"]
+          subprocess.run(["git", "-C", tools, "config", "core.autocrlf", "false"], check=True)
+          subprocess.run(["git", "-C", tools, "checkout-index", "--force", "--all"], check=True)
+          base = Path(os.environ["RUNNER_TEMP"])
+          paths = {"REGISTRY_BUNDLE": base / "zmcpio-registry",
+                   "REGISTRY_STAGE": base / "zmcpio-registry" / "source",
+                   "REGISTRY_TARGET": base / "zmcpio-registry-target",
+                   "REGISTRY_REBUILD_TARGET": base / "zmcpio-registry-rebuild-target"}
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
-              env.write(f"REGISTRY_STAGE={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry'}\n")
-              env.write(f"REGISTRY_TARGET={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry-target'}\n")
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-      - run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
-      - run: rustup default stable
+              for key, value in paths.items():
+                  env.write(f"{key}={value}\n")
+      - run: rustup toolchain install 1.100.0 --profile minimal --component rustfmt,clippy
       - run: python scripts/release.py apply
       - name: Commit exact candidate
         run: |
@@ -149,6 +251,7 @@ jobs:
           git add Cargo.toml Cargo.lock
           if ! git diff --cached --quiet; then git commit -m "release: v$VERSION"; fi
           test -z "$(git tag --list "v$VERSION")"
+          printf 'SOURCE_COMMIT=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_ENV"
       - run: python scripts/release.py preflight
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets --locked -- -D warnings
@@ -156,42 +259,61 @@ jobs:
       - run: cargo test --all-targets --all-features --locked
       - run: cargo test --doc --locked
       - run: python scripts/audit.py
-      - name: Prepare separate registry source from the committed Git lock
-        run: python scripts/release.py stage "${{ env.REGISTRY_STAGE }}"
+      - name: Install the registry packaging toolchain
+        run: rustup toolchain install 1.100.0 --profile minimal
+      - name: Prepare the pinned Project Z registry projection
+        env:
+          RUSTUP_TOOLCHAIN: '1.100.0'
+          CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+        run: python scripts/release.py stage "${{ env.REGISTRY_BUNDLE }}"
       - name: Audit the exact registry closure
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
         run: python scripts/audit.py --mode registry
       - name: Package and verify registry provenance
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
+        shell: python
         run: |
-          cargo package --locked
-          python scripts/release.py verify-package "${{ env.REGISTRY_STAGE }}"
+          import os
+          import subprocess
+          subprocess.run(["cargo", "package", "--locked", "--registry", "crates-io"], check=True)
+          subprocess.run(["python", os.path.join(os.environ["RELEASE_SOURCE_ROOT"], "scripts", "release.py"),
+                          "verify-package", os.environ["REGISTRY_STAGE"]], check=True)
       - run: python scripts/client_smoke.py
       - name: Dry-run the registry package
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
+        shell: python
         run: |
-          python scripts/release.py verify-stage "${{ env.REGISTRY_STAGE }}"
-          cargo publish --dry-run --locked
+          import os
+          import subprocess
+          subprocess.run(["python", os.path.join(os.environ["RELEASE_SOURCE_ROOT"], "scripts", "release.py"),
+                          "verify-stage", os.environ["REGISTRY_STAGE"]], check=True)
+          subprocess.run(["cargo", "publish", "--dry-run", "--locked", "--registry", "crates-io"], check=True)
       - name: Push verified version without overwriting concurrent commits
         run: python scripts/release.py push-source "${{ env.REGISTRY_STAGE }}"
       - name: Publish to crates.io
         working-directory: ${{ env.REGISTRY_STAGE }}
         env:
           CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+          RUSTUP_TOOLCHAIN: '1.100.0'
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           test -n "$CARGO_REGISTRY_TOKEN"
-          python scripts/release.py verify-stage "${{ env.REGISTRY_STAGE }}"
-          cargo publish --locked
+          python "$RELEASE_SOURCE_ROOT/scripts/release.py" verify-stage "$REGISTRY_STAGE"
+          cargo publish --locked --registry crates-io
       - name: Verify the published package identity and checksum
         working-directory: ${{ env.REGISTRY_STAGE }}
-        run: python scripts/release.py verify-published "${{ env.REGISTRY_STAGE }}"
+        env:
+          CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+        run: python "$RELEASE_SOURCE_ROOT/scripts/release.py" verify-published "$REGISTRY_STAGE"
       - name: Tag only after publication succeeds
         run: |
           git tag -a "v$VERSION" -m "Release v$VERSION"
