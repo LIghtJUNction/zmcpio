@@ -18,6 +18,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       ZMCPIO_BENCH_SMOKE: '1'
+      REGISTRY_STAGE: ${{ runner.temp }}/zmcpio-registry
+      REGISTRY_TARGET: ${{ runner.temp }}/zmcpio-registry-target
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -49,4 +51,17 @@ jobs:
         run: |
           rustup target add wasm32-unknown-unknown
           cargo check --locked --no-default-features --target wasm32-unknown-unknown
-      - run: cargo package --locked
+      - name: Prepare separate registry source from the committed Git lock
+        run: python scripts/release.py stage "${{ env.REGISTRY_STAGE }}"
+      - name: Audit the exact registry closure
+        working-directory: ${{ env.REGISTRY_STAGE }}
+        env:
+          CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+        run: python scripts/audit.py --mode registry
+      - name: Package and verify registry provenance
+        working-directory: ${{ env.REGISTRY_STAGE }}
+        env:
+          CARGO_TARGET_DIR: ${{ env.REGISTRY_TARGET }}
+        run: |
+          cargo package --locked
+          python scripts/release.py verify-package "${{ env.REGISTRY_STAGE }}"
