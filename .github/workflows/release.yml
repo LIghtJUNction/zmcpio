@@ -57,9 +57,15 @@ jobs:
     env:
       VERSION: ${{ needs.plan.outputs.version }}
       ZMCPIO_BENCH_SMOKE: '1'
-      REGISTRY_STAGE: ${{ runner.temp }}/zmcpio-registry
-      REGISTRY_TARGET: ${{ runner.temp }}/zmcpio-registry-target
     steps:
+      - name: Initialize isolated registry paths
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"REGISTRY_STAGE={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry'}\n")
+              env.write(f"REGISTRY_TARGET={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry-target'}\n")
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -121,9 +127,15 @@ jobs:
       VERSION: ${{ needs.plan.outputs.version }}
       DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
       ZMCPIO_BENCH_SMOKE: '1'
-      REGISTRY_STAGE: ${{ runner.temp }}/zmcpio-registry
-      REGISTRY_TARGET: ${{ runner.temp }}/zmcpio-registry-target
     steps:
+      - name: Initialize isolated registry paths
+        shell: python
+        run: |
+          import os
+          from pathlib import Path
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env:
+              env.write(f"REGISTRY_STAGE={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry'}\n")
+              env.write(f"REGISTRY_TARGET={Path(os.environ['RUNNER_TEMP']) / 'zmcpio-registry-target'}\n")
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
