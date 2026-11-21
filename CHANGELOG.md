@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.1 — 2026-11-22
+
+- Publish the current Git source through Project Z registry staging with an exact, independently rebuildable source receipt.
+- Preserve Git-only development dependencies and public runtime behavior.
+
 ## 0.5.0
 
 - Align the public zcall re-export with zcall 0.4.1 and zconv 0.4.1. The new minor version marks the public zcall crate-identity change from the 0.3 series. Development retains canonical Git sources; registry packages use the exact matching versions.
