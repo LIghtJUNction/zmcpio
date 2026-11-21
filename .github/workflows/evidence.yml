@@ -51,7 +51,15 @@ jobs:
           if ! git diff --cached --quiet; then git commit -m 'ci: validate unpublished release candidate'; fi
           cargo test --release --locked --all-targets
           python scripts/audit.py
+          registry_stage="$RUNNER_TEMP/zmcpio-registry"
+          python scripts/release.py stage "$registry_stage"
+          cd "$registry_stage"
+          export REGISTRY_TARGET="$RUNNER_TEMP/zmcpio-registry-target"
+          export CARGO_TARGET_DIR="$REGISTRY_TARGET"
+          python scripts/audit.py --mode registry
           cargo package --locked
+          python scripts/release.py verify-package "$registry_stage"
+          python scripts/release.py verify-stage "$registry_stage"
           cargo publish --dry-run --locked
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
