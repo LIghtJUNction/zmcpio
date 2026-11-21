@@ -109,6 +109,36 @@ fn pending_event_applies_backpressure_without_consuming_next_bytes() {
 }
 
 #[test]
+fn reset_discards_unread_event_before_next_stream() {
+    let mut line = [0; 64];
+    let mut data = [0; 64];
+    let mut name = [0; 16];
+    let mut id = [0; 16];
+    let mut decoder = Decoder::new(&mut line, &mut data, &mut name, &mut id, 256);
+    let previous = b"id: previous\nevent: update\nretry: 42\ndata: old\n\n";
+    assert_eq!(decoder.feed(previous).status, Status::Ready);
+    assert_eq!(decoder.event().unwrap().id, Some("previous"));
+
+    decoder.reset();
+    assert_eq!(decoder.event(), None);
+    let next = b"data: fresh\n\n";
+    let step = decoder.feed(next);
+    assert_eq!(step.consumed, next.len());
+    assert_eq!(step.status, Status::Ready);
+    assert_eq!(
+        decoder.event(),
+        Some(Event {
+            data: Some(b"fresh"),
+            event: "message",
+            id: None,
+            retry_ms: None,
+        })
+    );
+    decoder.consume();
+    decoder.finish().unwrap();
+}
+
+#[test]
 fn metadata_only_blocks_and_empty_ids_are_not_lost() {
     let result = decode([b"id: checkpoint\nretry: 42\n\nid:\n\nid: bad\0id\n\n".as_slice()]);
     assert_eq!(result.len(), 2);
