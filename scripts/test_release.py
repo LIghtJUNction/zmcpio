@@ -42,6 +42,33 @@ GIT = {
 }
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
 
+class PublicationPathTests(unittest.TestCase):
+    def test_native_paths_match_posix_archive_names(self):
+        expected = {'Cargo.toml', 'Cargo.toml.orig', 'Cargo.lock',
+                    '.cargo_vcs_info.json', 'src/lib.rs', 'tests/transport/stdio.rs'}
+        for path_type, separator, newline in (
+            (pathlib.PurePosixPath, '/', '\n'),
+            (pathlib.PureWindowsPath, '\\', '\r\n'),
+        ):
+            output = newline.join(name.replace('/', separator) for name in sorted(expected)) + newline
+            with self.subTest(platform=path_type.__name__), \
+                 mock.patch.object(release, 'pathlib', mock.Mock(wraps=pathlib, PurePath=path_type)), \
+                 mock.patch.object(release.subprocess, 'run',
+                                   return_value=subprocess.CompletedProcess([], 0, stdout=output)) as run:
+                self.assertEqual(release.publication_paths('stage'), expected)
+                run.assert_called_once_with(['cargo', 'package', '--list', '--locked'],
+                                            cwd='stage', check=True, text=True, capture_output=True)
+
+    def test_empty_or_duplicate_canonical_paths_are_rejected(self):
+        for output in ('', 'src\\lib.rs\r\nsrc/lib.rs\r\n'):
+            with self.subTest(output=output), \
+                 mock.patch.object(release, 'pathlib',
+                                   mock.Mock(wraps=pathlib, PurePath=pathlib.PureWindowsPath)), \
+                 mock.patch.object(release.subprocess, 'run',
+                                   return_value=subprocess.CompletedProcess([], 0, stdout=output)):
+                with self.assertRaisesRegex(ValueError, 'Invalid Cargo publication file list'):
+                    release.publication_paths('stage')
+
 class GitOnlyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

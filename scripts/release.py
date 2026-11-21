@@ -299,7 +299,8 @@ def stage_receipt(stage):
 def publication_paths(stage):
     output = subprocess.run(['cargo', 'package', '--list', '--locked'], cwd=stage,
                             check=True, text=True, capture_output=True).stdout
-    names = output.splitlines()
+    # Cargo prints native paths, while tar member names always use POSIX separators.
+    names = [pathlib.PurePath(name).as_posix() for name in output.splitlines()]
     require(names and len(names) == len(set(names)), 'Invalid Cargo publication file list')
     return set(names)
 
