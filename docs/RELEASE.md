@@ -1,9 +1,9 @@
 # Release
 
 Development uses canonical Git URLs without registry version selectors. The
-committed Cargo.lock fixes the zcall and zconv versions and source commits. A
+committed Cargo.lock fixes the z64, zcall and zconv versions and source commits. A
 release version bump changes only zmcpio's package version in Cargo.toml and
-Cargo.lock; it does not advance either dependency.
+Cargo.lock; it does not advance any dependency.
 
 Registry publication uses the Project Z projection tool at commit
 `8df81739982dd60c760d0d47c4f7b02df0e1db74`. The workflow checks out that revision
@@ -19,7 +19,8 @@ must produce a newly verified archive.
 
 ## Source and registry validation
 
-The supported dependency closure is exactly zmcpio → zcall → zconv. The source
+The supported dependency closure is exactly zmcpio → {z64, zcall}, with
+zcall → zconv and no further dependencies from z64 or zconv. The source
 audit checks the committed manifest and lock against actual locked Cargo
 metadata. It rejects registry fallback, another Git URL or commit, extra
 packages, and additional development, build, optional or target dependencies.

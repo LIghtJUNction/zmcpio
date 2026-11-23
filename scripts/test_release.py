@@ -40,10 +40,12 @@ import release
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 REPOSITORY = SCRIPTS.parent
 GIT = {
+    'z64': 'https://github.com/LIghtJUNction/z64.git',
     'zcall': 'https://github.com/LIghtJUNction/zcall.git',
     'zconv': 'https://github.com/LIghtJUNction/zconv.git',
 }
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
+CHECKSUMS = {'z64': 'c' * 64, 'zcall': 'a' * 64, 'zconv': 'b' * 64}
 
 class PublicationPathTests(unittest.TestCase):
     def test_native_paths_match_posix_archive_names(self):
@@ -90,9 +92,11 @@ class ProjectionFixture:
         with tarfile.open(fileobj=io.BytesIO(payload), mode='r:') as archive:
             archive.extractall(source, filter='data')
         lock = (source / 'Cargo.lock').read_bytes()
-        version = next(p['version'] for p in tomllib.loads(lock.decode())['package'] if p['name'] == 'zcall')
+        versions = {p['name']: p['version'] for p in tomllib.loads(lock.decode())['package']}
         path = source / manifest
-        projected = path.read_text().replace('git = "' + GIT['zcall'] + '"', 'version = "=' + version + '"')
+        projected = path.read_text()
+        for name in ('z64', 'zcall'):
+            projected = projected.replace('git = "' + GIT[name] + '"', 'version = "=' + versions[name] + '"')
         # Distinct whole-projection output detects code that substitutes its own
         # manifest rewriting instead of using the selected projection tool.
         path.write_text('# functional projection fixture\n' + projected)
@@ -179,7 +183,7 @@ class GitOnlyTests(unittest.TestCase):
                 def registry_row(item, row):
                     if item['name'] == 'zmcpio':
                         return row
-                    checksum = ('a' if item['name'] == 'zcall' else 'b') * 64
+                    checksum = CHECKSUMS[item['name']]
                     return row.replace(item['source'], REGISTRY).replace(
                         'source = "' + REGISTRY + '"', 'source = "' + REGISTRY + '"\nchecksum = "' + checksum + '"')
                 (stage / 'Cargo.lock').write_text(release.map_lock(text, registry_row), newline='\n')
@@ -211,7 +215,7 @@ class GitOnlyTests(unittest.TestCase):
         packages = []
         for item in lock['package']:
             name = item['name']
-            deps = {'zmcpio': ['zcall'], 'zcall': ['zconv'], 'zconv': []}[name]
+            deps = {'zmcpio': ['z64', 'zcall'], 'z64': [], 'zcall': ['zconv'], 'zconv': []}[name]
             dependencies = [{
                 'name': dep, 'source': 'git+' + GIT[dep] if mode == 'development' else REGISTRY,
                 'req': '*' if mode == 'development' and name == 'zmcpio' else '=0.4.0',
@@ -233,16 +237,16 @@ class GitOnlyTests(unittest.TestCase):
             return {'users': [{'login': 'LIghtJUNction'}]}
         if path.startswith('crates/zmcpio/'):
             return None
-        for name in ('zcall', 'zconv'):
+        for name in GIT:
             if path == 'crates/' + name:
                 return {'crate': {'id': name, 'repository': GIT[name].removesuffix('.git')}}
             if path == 'crates/' + name + '/owners':
                 return {'users': [{'login': 'LIghtJUNction'}]}
             if path == 'crates/' + name + '/0.4.0':
                 return {'version': {'crate': name, 'num': '0.4.0', 'yanked': False,
-                                    'checksum': ('a' if name == 'zcall' else 'b') * 64}}
+                                    'checksum': CHECKSUMS[name]}}
             if path == 'crates/' + name + '/0.4.0/dependencies':
-                return {'dependencies': [] if name == 'zconv' else [{
+                return {'dependencies': [] if name in ('z64', 'zconv') else [{
                     'crate_id': 'zconv', 'req': '=0.4.0', 'kind': 'normal',
                     'optional': False, 'default_features': False, 'features': [],
                     'target': None, 'registry': None,
@@ -287,7 +291,8 @@ class GitOnlyTests(unittest.TestCase):
                 package['version'] = '0.4.1'
         self.assertEqual(updated, old_lock)
         self.assertEqual(self.manifest()['package']['version'], '0.4.1')
-        self.assertNotIn('version', self.manifest()['dependencies']['zcall'])
+        for name in ('z64', 'zcall'):
+            self.assertNotIn('version', self.manifest()['dependencies'][name])
         self.assertEqual(set(self.git('diff', '--name-only').splitlines()), {'Cargo.toml', 'Cargo.lock'})
 
 
@@ -299,13 +304,15 @@ class GitOnlyTests(unittest.TestCase):
 
     def test_development_never_falls_back_to_registry(self):
         audit = self.audit_module()
-        for update in ({'version': '=0.4.0'}, {'version': '*'},
-                       {'branch': 'main'}, {'tag': 'v0.4.0'}, {'rev': 'a' * 40},
-                       {'path': '../zcall'}, {'optional': True}, {'features': ['std']}):
-            value = copy.deepcopy(self.manifest())
-            value['dependencies']['zcall'].update(update)
-            with self.subTest(update=update), self.assertRaises(ValueError):
-                audit.validate_manifest(value)
+        for name in ('z64', 'zcall'):
+            for update in ({'version': '=0.4.0'}, {'version': '*'},
+                           {'branch': 'main'}, {'tag': 'v0.4.0'}, {'rev': 'a' * 40},
+                           {'path': '../' + name}, {'optional': True}, {'features': ['std']},
+                           {'default-features': True}):
+                value = copy.deepcopy(self.manifest())
+                value['dependencies'][name].update(update)
+                with self.subTest(name=name, update=update), self.assertRaises(ValueError):
+                    audit.validate_manifest(value)
         for section in ('dev-dependencies', 'build-dependencies', 'target'):
             value = copy.deepcopy(self.manifest())
             value[section] = {'surprise': '1'}
@@ -317,18 +324,20 @@ class GitOnlyTests(unittest.TestCase):
         valid = self.lock()
         audit.validate_lock(self.manifest(), valid)
         mutations = []
-        missing = copy.deepcopy(valid)
-        missing['package'] = [p for p in missing['package'] if p['name'] != 'zconv']
-        mutations.append(missing)
+        for name in GIT:
+            missing = copy.deepcopy(valid)
+            missing['package'] = [p for p in missing['package'] if p['name'] != name]
+            mutations.append(missing)
         duplicate = copy.deepcopy(valid)
         duplicate['package'].append(copy.deepcopy(duplicate['package'][0]))
         mutations.append(duplicate)
-        for source in (REGISTRY, 'git+' + GIT['zcall'] + '?branch=main#' + 'a'*40,
-                       'git+https://github.com/another/zcall.git#' + 'a'*40,
-                       'git+' + GIT['zcall'] + '#short'):
-            bad = copy.deepcopy(valid)
-            next(p for p in bad['package'] if p['name'] == 'zcall')['source'] = source
-            mutations.append(bad)
+        for name in GIT:
+            for source in (REGISTRY, 'git+' + GIT[name] + '?branch=main#' + 'a'*40,
+                           'git+https://github.com/another/' + name + '.git#' + 'a'*40,
+                           'git+' + GIT[name] + '#short'):
+                bad = copy.deepcopy(valid)
+                next(p for p in bad['package'] if p['name'] == name)['source'] = source
+                mutations.append(bad)
         for bad in mutations:
             with self.subTest(lock=bad), self.assertRaises(ValueError):
                 audit.validate_lock(self.manifest(), bad)
@@ -339,11 +348,14 @@ class GitOnlyTests(unittest.TestCase):
         # Cargo activates the root's named default feature even when default = [].
         next(n for n in original['resolve']['nodes'] if n['id'] == 'zmcpio')['features'] = ['default']
         audit.validate_metadata(original, self.manifest(), self.lock(), self.root)
-        extra = copy.deepcopy(original)
-        next(n for n in extra['resolve']['nodes'] if n['id'] == 'zcall')['features'] = ['default']
-        with self.assertRaises(ValueError):
-            audit.validate_metadata(extra, self.manifest(), self.lock(), self.root)
+        for name in GIT:
+            extra = copy.deepcopy(original)
+            next(n for n in extra['resolve']['nodes'] if n['id'] == name)['features'] = ['default']
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                audit.validate_metadata(extra, self.manifest(), self.lock(), self.root)
         for name, key, value in (
+            ('z64', 'version', '0.5.0'),
+            ('z64', 'source', 'git+' + GIT['z64'] + '#' + 'c' * 40),
             ('zcall', 'version', '0.5.0'),
             ('zcall', 'source', 'git+' + GIT['zcall'] + '#' + 'c' * 40),
             ('zmcpio', 'source', REGISTRY),
@@ -356,7 +368,7 @@ class GitOnlyTests(unittest.TestCase):
                              ('uses_default_features', True), ('features', ['std']),
                              ('target', 'cfg(unix)')):
             altered = copy.deepcopy(original)
-            altered['packages'][0]['dependencies'][0][field] = value
+            next(p for p in altered['packages'] if p['name'] == 'zmcpio')['dependencies'][0][field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
                 audit.validate_metadata(altered, self.manifest(), self.lock(), self.root)
 
@@ -370,18 +382,21 @@ class GitOnlyTests(unittest.TestCase):
         self.assertEqual(before, {name: (self.root / name).read_bytes() for name in before})
         stage_manifest = tomllib.loads((dest / 'Cargo.toml').read_text())
         expected = copy.deepcopy(self.manifest())
-        expected['dependencies']['zcall'].pop('git')
-        expected['dependencies']['zcall']['version'] = '=0.4.0'
+        for name in ('z64', 'zcall'):
+            expected['dependencies'][name].pop('git')
+            expected['dependencies'][name]['version'] = '=0.4.0'
         self.assertEqual(stage_manifest, expected)
         lock = tomllib.loads((dest / 'Cargo.lock').read_text())
         for p in lock['package']:
             if p['name'] != 'zmcpio':
                 self.assertEqual(p['source'], REGISTRY)
-                self.assertEqual(p['checksum'], ('a' if p['name'] == 'zcall' else 'b')*64)
+                self.assertEqual(p['checksum'], CHECKSUMS[p['name']])
         self.assertEqual(receipt['source_commit'], self.head)
         self.assertEqual(release.stage_receipt(dest), receipt)
-        self.assertEqual(receipt['dependencies']['zcall']['git_source'],
-                         next(p for p in self.lock()['package'] if p['name'] == 'zcall')['source'])
+        self.assertEqual(set(receipt['dependencies']), {'z64', 'zcall', 'zconv'})
+        for name in GIT:
+            self.assertEqual(receipt['dependencies'][name]['git_source'],
+                             next(p for p in self.lock()['package'] if p['name'] == name)['source'])
         self.assertFalse((dest / 'docs/registry-source.json').exists())
         self.assertFalse((dest / '.git').exists())
         self.assertEqual(receipt['projection_tool_sha'], release.PROJECTION_TOOL_SHA)
@@ -407,6 +422,12 @@ class GitOnlyTests(unittest.TestCase):
 
     def test_registry_identity_yank_checksum_and_closure_rejected(self):
         cases = [
+            ('crates/z64/0.4.0', lambda x: x['version'].update(num='0.4.1')),
+            ('crates/z64/0.4.0', lambda x: x['version'].update(yanked=True)),
+            ('crates/z64/0.4.0', lambda x: x['version'].update(checksum='invalid')),
+            ('crates/z64/owners', lambda x: x.update(users=[{'login': 'different'}])),
+            ('crates/z64/0.4.0/dependencies',
+             lambda x: x.update(dependencies=[{'crate_id': 'unexpected'}])),
             ('crates/zcall/0.4.0', lambda x: x['version'].update(num='0.4.1')),
             ('crates/zcall/0.4.0', lambda x: x['version'].update(crate='different')),
             ('crates/zcall/0.4.0', lambda x: x['version'].update(yanked=True)),

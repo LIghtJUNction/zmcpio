@@ -229,7 +229,7 @@ def registry_identity(name, repository, allow_missing=False):
 
 def dependency_registry(snapshot):
     resolved = {}
-    for name in ('zcall', 'zconv'):
+    for name in GIT:
         item = snapshot['packages'][name]
         version = item['version']
         require(registry_identity(name, GIT[name].removesuffix('.git')), 'Dependency is not registered')
@@ -241,7 +241,7 @@ def dependency_registry(snapshot):
         deps = get_json('crates/' + name + '/' + version + '/dependencies').get('dependencies')
         require(isinstance(deps, list) and len(deps) == len(EDGES[name])
                 and {d.get('crate_id') for d in deps} == set(EDGES[name]),
-                'Registry dependency closure differs from the three-package contract')
+                'Registry dependency closure differs from the four-package contract')
         for dep in deps:
             require(dep.get('req') == '=' + snapshot['packages'][dep['crate_id']]['version']
                     and dep.get('kind') == 'normal' and dep.get('optional') is False
@@ -283,7 +283,7 @@ def package_version_text(text, old, new):
 
 def map_lock(text, rewrite):
     pieces = re.split(r'(?m)^\[\[package\]\][ \t]*$', text)
-    require(len(pieces) == 4, 'Expected exactly three lock package tables')
+    require(len(pieces) == len(EDGES) + 1, 'Expected exactly four lock package tables')
     output = pieces[0]
     for block in pieces[1:]:
         item = tomllib.loads('[[package]]' + block)['package'][0]

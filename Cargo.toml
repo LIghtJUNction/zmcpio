@@ -17,6 +17,7 @@ std = []
 
 [dependencies]
 zcall = { default-features = false, git = "https://github.com/LIghtJUNction/zcall.git"}
+z64 = { default-features = false, git = "https://github.com/LIghtJUNction/z64.git" }
 
 [dev-dependencies]
 

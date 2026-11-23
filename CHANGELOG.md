@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Reuse `z64::Mode::Standard` for HTTP header sentinel Base64, preserving caller-owned buffers, canonical padding checks, UTF-8 validation and total capacity reporting.
+- Include z64 in the exact source and registry dependency audits, with default features disabled and the existing identity, checksum and publication checks retained.
+
 ## 0.5.1 — 2026-11-22
 
 - Publish the current Git source through Project Z registry staging with an exact, independently rebuildable source receipt.

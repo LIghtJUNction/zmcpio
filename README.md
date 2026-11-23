@@ -2,7 +2,8 @@
 
 Bounded MCP client/server primitives for applications that own authorization and
 scheduling. The protocol core is `no_std`, allocation-free and forbids unsafe
-Rust. `zcall` is its only direct third-party dependency; `zconv` is transitive.
+Rust. It uses `zcall` for shared model/tool contracts and `z64` for strict Base64;
+`zconv` is transitive through `zcall`. Both direct dependencies disable default features.
 The optional `std` feature adds blocking stdio process I/O and bounded HTTP/1.1
 I/O over caller-supplied TCP or verified TLS streams.
 
@@ -27,7 +28,7 @@ zmcpio = { version = "0.5.1", default-features = false, features = ["std"] }
 The protocol core and `zcall` bridge do not require an allocator. Process/socket
 setup may allocate. HTTPS requires a caller-supplied verified TLS stream.
 Development follows the internal Git default branches; Cargo.lock records the exact
-zcall and zconv commits and package versions. Registry releases use the separate
+z64, zcall and zconv commits and package versions. Registry releases use the separate
 [release staging workflow](docs/RELEASE.md). The shared model
 contract and resource codecs are available through `zmcpio::zcall`. The zcall
 standard-library server remains opt-in; zmcpio keeps its dependency defaults

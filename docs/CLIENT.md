@@ -2,8 +2,9 @@
 
 `zmcpio` can act as the client of an MCP tool server. The default core encodes
 requests and validates replies without I/O or allocation. The optional `std`
-adapters start a real stdio server process or frame HTTP/1.1 on supplied streams. `zcall` is the only direct dependency;
-the exact same types are available through `zmcpio::zcall::v1`.
+adapters start a real stdio server process or frame HTTP/1.1 on supplied streams.
+`zcall` provides the shared types available through `zmcpio::zcall::v1`;
+`z64` encodes and decodes HTTP header sentinels in caller-owned buffers.
 
 ## Run a real server connection
 

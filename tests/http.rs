@@ -564,6 +564,86 @@ fn sentinel_round_trip_and_canonical_padding() {
     );
 }
 #[test]
+fn sentinel_exact_capacity_and_error_precedence() {
+    for (value, expected) in [
+        ("\0", "=?base64?AA==?="),
+        ("\0\0", "=?base64?AAA=?="),
+        ("\0\0\0", "=?base64?AAAA?="),
+    ] {
+        let mut output = [0xa5; 32];
+        for capacity in 0..expected.len() {
+            assert_eq!(
+                http::encode_header_value(value, &mut output[..capacity]),
+                Err(HttpError::Capacity {
+                    needed: expected.len()
+                })
+            );
+        }
+        assert_eq!(
+            http::encode_header_value(value, &mut output[..expected.len()]),
+            Ok(expected)
+        );
+        assert!(output[expected.len()..].iter().all(|&byte| byte == 0xa5));
+        assert_eq!(
+            http::decode_header_value(expected, &mut output[..value.len()]),
+            Ok(value)
+        );
+    }
+
+    let mut unchanged = [0xa5; 4];
+    assert_eq!(
+        http::decode_header_value("=?base64?YWJj?=", &mut unchanged[..2]),
+        Err(HttpError::Capacity { needed: 3 })
+    );
+    assert_eq!(unchanged, [0xa5; 4]);
+    assert_eq!(
+        http::decode_header_value("=?base64??=", &mut unchanged),
+        Ok("")
+    );
+    assert_eq!(unchanged, [0xa5; 4]);
+
+    assert_eq!(
+        http::decode_header_value("=?base64?A?=", &mut []),
+        Err(HttpError::InvalidHeader)
+    );
+    for (wire, needed) in [
+        ("=?base64?!!!!?=", 3),
+        ("=?base64?AB==?=", 1),
+        ("=?base64?AAF=?=", 2),
+    ] {
+        assert_eq!(
+            http::decode_header_value(wire, &mut []),
+            Err(HttpError::Capacity { needed })
+        );
+        assert_eq!(
+            http::decode_header_value(wire, &mut [0; 4]),
+            Err(HttpError::InvalidHeader)
+        );
+    }
+}
+
+#[test]
+fn post_header_capacity_includes_encoded_name_and_framing() {
+    let mut storage = [];
+    let session = ClientSession::new(Version::V2026_07_28, &mut storage);
+    let mut output = [0; 512];
+    let needed = session
+        .post_headers("tools/call", Some("世界"), &mut output)
+        .unwrap();
+    assert!(output[..needed].ends_with(b"Mcp-Name: =?base64?5LiW55WM?=\r\n"));
+    for capacity in [0, 1, needed - 1] {
+        assert_eq!(
+            session.post_headers("tools/call", Some("世界"), &mut output[..capacity]),
+            Err(HttpError::Capacity { needed })
+        );
+    }
+    assert_eq!(
+        session.post_headers("tools/call", Some("世界"), &mut output[..needed]),
+        Ok(needed)
+    );
+}
+
+#[test]
 fn standard_headers_match_decoded_unicode_names() {
     let json = br#"{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"Hello, \u4e16\u754c","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}"#;
     let mut tokens = [Token::EMPTY; 64];

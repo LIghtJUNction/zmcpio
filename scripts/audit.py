@@ -1,4 +1,4 @@
-"""Audit the committed three-package closure, with explicit development/stage modes."""
+"""Audit the committed dependency closure, with explicit development/stage modes."""
 import argparse
 import json
 import pathlib
@@ -8,11 +8,12 @@ import tomllib
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 GIT = {
+    'z64': 'https://github.com/LIghtJUNction/z64.git',
     'zcall': 'https://github.com/LIghtJUNction/zcall.git',
     'zconv': 'https://github.com/LIghtJUNction/zconv.git',
 }
 REGISTRY = 'registry+https://github.com/rust-lang/crates.io-index'
-EDGES = {'zmcpio': ['zcall'], 'zcall': ['zconv'], 'zconv': []}
+EDGES = {'zmcpio': ['z64', 'zcall'], 'z64': [], 'zcall': ['zconv'], 'zconv': []}
 
 
 def require(condition, message):
@@ -26,27 +27,28 @@ def validate_manifest(value, mode='development'):
     require(all(not value.get(k) for k in ('dev-dependencies', 'build-dependencies', 'target', 'patch', 'replace')),
             'Extra dependency tables are not allowed')
     require(not value.get('workspace', {}).get('dependencies'), 'Workspace dependency fallback is not allowed')
-    require(set(value.get('dependencies', {})) == {'zcall'}, 'Expected only the zcall dependency')
-    dep = value['dependencies']['zcall']
-    require(isinstance(dep, dict), 'Expected a dependency table')
-    source_key = 'git' if mode == 'development' else 'version'
-    require(set(dep) <= {source_key, 'default-features', 'optional', 'features'},
-            'Dependency source selectors cannot be mixed')
-    require(dep.get('default-features') is False and not dep.get('optional') and not dep.get('features'),
-            'No default, optional or extra dependency features are permitted')
-    if mode == 'development':
-        require(dep.get('git') == GIT['zcall'], 'Development must use the canonical Git default branch without version')
-    else:
-        require(isinstance(dep.get('version'), str) and re.fullmatch(r'=[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?', dep['version']),
-                'Registry stage must use an exact locked version')
-    return dep
+    dependencies = value.get('dependencies', {})
+    require(set(dependencies) == set(EDGES['zmcpio']), 'Expected only the z64 and zcall dependencies')
+    for name, dep in dependencies.items():
+        require(isinstance(dep, dict), 'Expected a dependency table')
+        source_key = 'git' if mode == 'development' else 'version'
+        require(set(dep) <= {source_key, 'default-features', 'optional', 'features'},
+                'Dependency source selectors cannot be mixed')
+        require(dep.get('default-features') is False and not dep.get('optional') and not dep.get('features'),
+                'No default, optional or extra dependency features are permitted')
+        if mode == 'development':
+            require(dep.get('git') == GIT[name], 'Development must use the canonical Git default branch without version')
+        else:
+            require(isinstance(dep.get('version'), str) and re.fullmatch(r'=[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?', dep['version']),
+                    'Registry stage must use an exact locked version')
+    return dependencies
 
 
 def validate_lock(value, lock, mode='development'):
-    dep = validate_manifest(value, mode)
+    dependencies = validate_manifest(value, mode)
     entries = lock.get('package', [])
-    require(len(entries) == 3 and {p.get('name') for p in entries} == set(EDGES),
-            'Lock must contain exactly one zmcpio, zcall and zconv')
+    require(len(entries) == len(EDGES) and {p.get('name') for p in entries} == set(EDGES),
+            'Lock must contain exactly one zmcpio, z64, zcall and zconv')
     packages = {p['name']: p for p in entries}
     for name, item in packages.items():
         require(isinstance(item.get('version'), str) and item['version'], 'Lock version is missing')
@@ -62,15 +64,16 @@ def validate_lock(value, lock, mode='development'):
             require(item.get('source') == REGISTRY and re.fullmatch(r'[0-9a-f]{64}', item.get('checksum', '')) is not None,
                     'Registry package source/checksum is invalid')
     if mode == 'registry':
-        require(dep['version'] == '=' + packages['zcall']['version'], 'Stage manifest does not match registry lock')
+        for name, dep in dependencies.items():
+            require(dep['version'] == '=' + packages[name]['version'], 'Stage manifest does not match registry lock')
     return packages
 
 
 def validate_metadata(data, value, lock, root, mode='development'):
     packages = validate_lock(value, lock, mode)
     items = data.get('packages', [])
-    require(len(items) == 3 and {p.get('name') for p in items} == set(EDGES),
-            'Resolved graph must contain exactly the three locked packages')
+    require(len(items) == len(EDGES) and {p.get('name') for p in items} == set(EDGES),
+            'Resolved graph must contain exactly the four locked packages')
     ids = {}
     for item in items:
         name = item['name']
@@ -83,7 +86,7 @@ def validate_metadata(data, value, lock, root, mode='development'):
                     'Resolved root is not this source directory')
         deps = item.get('dependencies', [])
         require(len(deps) == len(EDGES[name]) and {d.get('name') for d in deps} == set(EDGES[name]),
-                'Resolved declarations changed the three-package closure')
+                'Resolved declarations changed the four-package closure')
         for dependency in deps:
             target = dependency['name']
             require(dependency.get('kind') is None and not dependency.get('optional')
@@ -93,7 +96,7 @@ def validate_metadata(data, value, lock, root, mode='development'):
             expected = 'git+' + GIT[target] if mode == 'development' else REGISTRY
             require(dependency.get('source') == expected, 'Resolved declaration uses a different source')
     nodes = data.get('resolve', {}).get('nodes', [])
-    require(len(nodes) == 3 and {n.get('id') for n in nodes} == set(ids), 'Resolved nodes differ from locked packages')
+    require(len(nodes) == len(EDGES) and {n.get('id') for n in nodes} == set(ids), 'Resolved nodes differ from locked packages')
     for node in nodes:
         require([ids.get(d) for d in node.get('dependencies', [])] == EDGES[ids[node['id']]],
                 'Resolved node edges differ from locked packages')
@@ -122,7 +125,7 @@ def main():
         stage_receipt(ROOT)
     data = json.loads(subprocess.check_output(['cargo', 'metadata', '--locked', '--format-version', '1'], cwd=ROOT))
     validate_metadata(data, value, lock, ROOT, mode)
-    print(mode + ': zmcpio -> zcall -> zconv; exact committed identities, no extra dependency features')
+    print(mode + ': zmcpio -> {z64, zcall}; zcall -> zconv; exact committed identities, no extra dependency features')
 
 
 if __name__ == '__main__':

@@ -82,8 +82,9 @@ case size and sample count when quoting a measurement.
 
 ## Deliberate boundaries
 
-The default core remains no_std with no allocator or unsafe code and one direct
-dependency, zcall; zconv is transitive. Optional std adapters can allocate during
+The default core remains no_std, requires no allocator and forbids unsafe code
+in zmcpio. Its direct dependencies are zcall and z64, with default features
+disabled; zconv is transitive through zcall. Optional std adapters can allocate during
 process/socket/buffer setup, which is distinct from the measured codec hot paths.
 
 TLS verification, OAuth acquisition, app authorization, complete JSON Schema

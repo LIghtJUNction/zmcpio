@@ -16,8 +16,11 @@ not a way to reset ID counters on an existing legacy connection.
 `bridge` uses the public zcall v1 contract rather than inventing parallel model
 types. A retained Invocation binds the independent MCP and provider call IDs.
 Validated MCP values are revalidated through zcall's public JSON constructor at
-the type boundary; this avoids unsafe constructors or a second direct dependency.
+the type boundary; this avoids unsafe constructors or a separate JSON dependency.
 Default bridging retains the whole result envelope as JSON for portability.
+
+`http` owns header sentinel framing and capacity/error mapping. It delegates
+standard Base64 byte conversion to `z64`, using the caller's output buffer.
 
 The optional `stdio` module owns a spawned child and its pipes. Framing remains
 bounded and caller-buffered; std process creation is not allocation-free. It is
