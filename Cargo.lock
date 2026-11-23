@@ -5,12 +5,12 @@ version = 4
 [[package]]
 name = "z64"
 version = "0.1.2"
-source = "git+https://github.com/LIghtJUNction/z64.git#7e9cff67beae2c484f8b9749b83ae24a1d0e1bbd"
+source = "git+https://github.com/LIghtJUNction/z64.git#7d7ade9c1612fac91b8bddffc26235847a1f5f3d"
 
 [[package]]
 name = "zcall"
 version = "0.4.2"
-source = "git+https://github.com/LIghtJUNction/zcall.git#49784ef8d537af2cad65917486bda6a641337a01"
+source = "git+https://github.com/LIghtJUNction/zcall.git#311e152afb6d6dda7b123f60a13173a5ddf62878"
 dependencies = [
  "zconv",
 ]
@@ -18,7 +18,7 @@ dependencies = [
 [[package]]
 name = "zconv"
 version = "0.4.1"
-source = "git+https://github.com/LIghtJUNction/zconv.git#11df5d00117ed87a7f5aebc5a2677f59fccff9b1"
+source = "git+https://github.com/LIghtJUNction/zconv.git#f9448d27997dc70dac05f0c0e58857bcce43ab72"
 
 [[package]]
 name = "zmcpio"
