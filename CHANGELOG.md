@@ -1,9 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.5.4
 
 - Reuse `z64::Mode::Standard` for HTTP header sentinel Base64, preserving caller-owned buffers, canonical padding checks, UTF-8 validation and total capacity reporting.
 - Include z64 in the exact source and registry dependency audits, with default features disabled and the existing identity, checksum and publication checks retained.
+- Align the registry projection with zcall 0.4.3 and zconv 0.4.3.
 
 ## 0.5.1 — 2026-11-22
 

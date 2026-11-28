@@ -1,6 +1,6 @@
 [package]
 name = "zmcpio"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2024"
 rust-version = "1.99.1"
 description = "Bounded MCP client/server primitives tightly integrated with zcall"

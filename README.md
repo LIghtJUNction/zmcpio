@@ -15,14 +15,14 @@ publisher and **must not** be used as a dependency for this implementation.
 
 ```toml
 [dependencies]
-zmcpio = { version = "0.5.1", default-features = false }
+zmcpio = { version = "0.5.4", default-features = false }
 ```
 
 To use the stdio and HTTP/1.1 I/O adapters, enable the optional `std` feature:
 
 ```toml
 [dependencies]
-zmcpio = { version = "0.5.1", default-features = false, features = ["std"] }
+zmcpio = { version = "0.5.4", default-features = false, features = ["std"] }
 ```
 
 The protocol core and `zcall` bridge do not require an allocator. Process/socket

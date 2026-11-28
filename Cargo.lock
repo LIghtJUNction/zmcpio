@@ -9,20 +9,20 @@ source = "git+https://github.com/LIghtJUNction/z64.git#7d7ade9c1612fac91b8bddffc
 
 [[package]]
 name = "zcall"
-version = "0.4.2"
-source = "git+https://github.com/LIghtJUNction/zcall.git#311e152afb6d6dda7b123f60a13173a5ddf62878"
+version = "0.4.3"
+source = "git+https://github.com/LIghtJUNction/zcall.git#d95df6835a514597fc79907eee4176e50744f96f"
 dependencies = [
  "zconv",
 ]
 
 [[package]]
 name = "zconv"
-version = "0.4.1"
-source = "git+https://github.com/LIghtJUNction/zconv.git#f9448d27997dc70dac05f0c0e58857bcce43ab72"
+version = "0.4.3"
+source = "git+https://github.com/LIghtJUNction/zconv.git#4fd0b919c331d82dba769608cae8c29b397da4b6"
 
 [[package]]
 name = "zmcpio"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "z64",
  "zcall",
